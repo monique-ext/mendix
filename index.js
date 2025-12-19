@@ -29,7 +29,7 @@ function normalize(str) {
 
 // ================= CATEGORIAS (INALTERADAS) =================
 const categorias = {
-  juridico: {
+  Juridico: {
     slaRef: 3,
     keywords: [
       "Elaboração de Minuta",
@@ -38,7 +38,7 @@ const categorias = {
       'Analysis and Data Collection and Strategy Definition'
     ].map(normalize),
   },
-  suprimentos: {
+  Suprimentos: {
     slaRef: 25,
     keywords: [
       "RFT",
@@ -50,7 +50,7 @@ const categorias = {
       "Overall",
     ].map(normalize),
   },
-  tecnico: {
+  Tecnico: {
     slaRef: 7,
     keywords: [
       "Avaliação Técnica",
@@ -229,7 +229,7 @@ async function buildResult(req) {
     }
     map.get(t.ParentWorkspace_InternalId).push(t);
   }
-  
+
   const slaGlobal = novoResumo();
 
   for (const rc of levelC) {
@@ -348,39 +348,94 @@ app.get("/mendix/sla-processo", async (req, res) => {
 // ============ 🔥 ENDPOINT KEYWORDS (NOVO) 🔥 ==============
 // ==========================================================
 
-// achata keywords mantendo normalização
-const keywordsFlat = Object.values(categorias)
-  .flatMap(c => c.keywords);
+// ================= KEYWORDS =================
 
-// conta keywords nas tasks (SEM SLA, SEM RC)
-async function contarKeywordsTasks() {
+const keywordToGroup = new Map();
+
+for (const [GrupoEtapa, cfg] of Object.entries(categorias)) {
+  for (const kw of cfg.keywords) {
+    keywordToGroup.set(normalize(kw), GrupoEtapa);
+  }
+}
+
+// ================= CONTADOR =================
+
+async function contarKeywordsTasks(req) {
+  const filtroEmail = req.query.user;
+  const filtroEtapa = req.query.etapa
+    ? normalize(req.query.etapa)
+    : null;
+
+  const rcsResp = await httpGetJson(`${BASE_URL}/requisicao`);
+  let rcs = asArray(rcsResp);
+
+  if (filtroEmail) {
+    const emailNorm = normalize(filtroEmail);
+    rcs = rcs.filter(r => normalize(r.EmialOwner) === emailNorm);
+  }
+
+  const levelC = rcs.filter(
+    r => r.Level === "C" && r._RequestInternalId
+  );
+
+  // ================= TASKS =================
+
   const xml = await httpGetText(TASKS_URL);
   const tasks = parseTasksXml(xml);
 
+  const map = new Map();
+  for (const t of tasks) {
+    if (!map.has(t.ParentWorkspace_InternalId)) {
+      map.set(t.ParentWorkspace_InternalId, []);
+    }
+    map.get(t.ParentWorkspace_InternalId).push(t);
+  }
+
+  // ================= CONTADOR =================
+
   const contador = {};
 
-  for (const t of tasks) {
-    if (!t.Title) continue;
+  for (const rc of levelC) {
+    const ws =
+      rc.ParentWorkspace_InternalId ||
+      rc._RequestInternalId ||
+      rc.Workspace_InternalId;
 
-    const titleNorm = normalize(t.Title);
+    const rcTasks = map.get(ws) || [];
 
-    for (const kw of keywordsFlat) {
-      if (titleNorm === kw) {
-        contador[kw] = (contador[kw] || 0) + 1;
+    for (const t of rcTasks) {
+      if (!t?.Title) continue;
+
+      const titleNorm = normalize(t.Title);
+
+      // filtro opcional por etapa
+      if (filtroEtapa && titleNorm !== filtroEtapa) continue;
+
+      const GrupoEtapa = keywordToGroup.get(titleNorm);
+      if (!GrupoEtapa) continue;
+
+      const key = `${GrupoEtapa}|${titleNorm}`;
+
+      if (!contador[key]) {
+        contador[key] = {
+          NomeEtapa: t.Title, // mantém texto original
+          GrupoEtapa,
+          Quantidade: 0,
+        };
       }
+
+      contador[key].Quantidade++;
     }
   }
 
-  return Object.entries(contador).map(([keyword, count]) => ({
-    keyword,
-    count,
-  }));
+  return Object.values(contador);
 }
 
-// endpoint novo
+// ================= ENDPOINT =================
+
 app.get("/mendix/tasks/keywords", async (req, res) => {
   try {
-    const data = await contarKeywordsTasks();
+    const data = await contarKeywordsTasks(req);
     res.json(data);
   } catch (e) {
     res.status(500).json({
