@@ -3,7 +3,7 @@ trigger:
   - master
 
 variables:
-  acrName: acrspicdev
+  acrName: compras
   imageName: mendix-sla
   dockerfilePath: Dockerfile
   tag: $(Build.BuildId)
