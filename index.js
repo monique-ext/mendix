@@ -1,0 +1,484 @@
+#!/usr/bin/env node
+"use strict";
+
+const fetch = require("node-fetch");
+const express = require("express");
+const https = require("https");
+
+// ================= TLS AGENT =================
+const httpsAgent = new https.Agent({
+  rejectUnauthorized: false,
+});
+
+// ================= CONFIG =================
+const BASE_URL = "https://api-dev.spicbrasil.com.br/mendix";
+const TASKS_URL =
+  "https://spicpurchaseservice-dev.apps.sa-1a.mendixcloud.com/rest/slataskapi/v1/taskslist_json/WS2855531894";
+
+const TIMEOUT_MS = 30000;
+const PORT = 3000;
+
+// ================= NORMALIZE =================
+function normalize(str) {
+  return String(str || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+// ================= CATEGORIAS (INALTERADAS) =================
+const categorias = {
+  juridico: {
+    slaRef: 3,
+    keywords: [
+      "Elaboração de Minuta",
+      "Discussão de Minuta",
+      "Assinatura",
+      'Analysis and Data Collection and Strategy Definition'
+    ].map(normalize),
+  },
+  suprimentos: {
+    slaRef: 25,
+    keywords: [
+      "RFT",
+      "Definição de Estratégia de compras",
+      "Conexão do Fornecedor",
+      "Solicitação de propostas técnicas revisadas",
+      "Análise Comercial / Negociação",
+      "Emissão do Contrato SAP",
+      "Overall",
+    ].map(normalize),
+  },
+  tecnico: {
+    slaRef: 7,
+    keywords: [
+      "Avaliação Técnica",
+      "Avaliação das propostas técnicas revisadas",
+    ].map(normalize),
+  },
+};
+
+// ================= APP =================
+const app = express();
+app.use(express.json());
+
+// ================= UTIL =================
+function ts() {
+  return new Date().toISOString();
+}
+
+function makeAbort(ms) {
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), ms);
+  return { controller, cancel: () => clearTimeout(t) };
+}
+
+function asArray(resp) {
+  if (!resp) return [];
+  if (Array.isArray(resp)) return resp;
+
+  if (resp.RequisicaoCompras?.RequisicaoCompra)
+    return resp.RequisicaoCompras.RequisicaoCompra;
+
+  for (const v of Object.values(resp)) {
+    if (Array.isArray(v)) return v;
+    if (v && typeof v === "object") {
+      for (const vv of Object.values(v)) {
+        if (Array.isArray(vv)) return vv;
+      }
+    }
+  }
+  return [];
+}
+
+// ================= HTTP =================
+async function httpGetJson(url) {
+  const { controller, cancel } = makeAbort(TIMEOUT_MS);
+  try {
+    const res = await fetch(url, {
+      signal: controller.signal,
+      agent: httpsAgent,
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  } finally {
+    cancel();
+  }
+}
+
+async function httpGetText(url) {
+  const { controller, cancel } = makeAbort(TIMEOUT_MS);
+  try {
+    const res = await fetch(url, {
+      signal: controller.signal,
+      agent: httpsAgent,
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.text();
+  } finally {
+    cancel();
+  }
+}
+
+// ================= XML PARSE =================
+function getXmlValue(xml, tag) {
+  const r = new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`);
+  const m = xml.match(r);
+  return m ? m[1].trim() : null;
+}
+
+function isXmlNil(xml, tag) {
+  return new RegExp(`<${tag}[^>]*xsi:nil="true"`).test(xml);
+}
+
+function parseTasksXml(xmlText) {
+  const blocks =
+    xmlText.match(/<TasksList_Json>[\s\S]*?<\/TasksList_Json>/g) || [];
+
+  return blocks.map(xml => ({
+    Title: getXmlValue(xml, "Title"),
+    ParentWorkspace_InternalId: getXmlValue(xml, "ParentWorkspace_InternalId"),
+    BeginDate: isXmlNil(xml, "BeginDate") ? null : getXmlValue(xml, "BeginDate"),
+    EndDateTime: isXmlNil(xml, "EndDateTime")
+      ? null
+      : getXmlValue(xml, "EndDateTime"),
+  }));
+}
+
+// ================= SLA BASE (RC – INALTERADO) =================
+function isWeekend(d) {
+  return d.getDay() === 0 || d.getDay() === 6;
+}
+
+function diffBusinessDays(start, end) {
+  let count = 0;
+  const cur = new Date(start);
+  while (cur < end) {
+    if (!isWeekend(cur)) count++;
+    cur.setDate(cur.getDate() + 1);
+  }
+  return count;
+}
+
+// ================= SLA RC (INALTERADO) =================
+function novoResumo() {
+  return {
+    juridico: { noPrazo: 0, proximoVencer: 0, vencido: 0 },
+    suprimentos: { noPrazo: 0, proximoVencer: 0, vencido: 0 },
+    tecnico: { noPrazo: 0, proximoVencer: 0, vencido: 0 },
+  };
+}
+
+function acumular(dest, src) {
+  for (const g of Object.keys(dest)) {
+    dest[g].noPrazo += src[g].noPrazo;
+    dest[g].proximoVencer += src[g].proximoVencer;
+    dest[g].vencido += src[g].vencido;
+  }
+}
+
+function calcularSlaTasks(tasks, filtroEtapa) {
+  const resumo = novoResumo();
+  const now = new Date();
+  const etapaNorm = filtroEtapa ? normalize(filtroEtapa) : null;
+
+  for (const t of tasks) {
+    if (!t.BeginDate || t.EndDateTime) continue;
+    if (etapaNorm && normalize(t.Title) !== etapaNorm) continue;
+
+    const titulo = normalize(t.Title);
+
+    for (const [grupo, cfg] of Object.entries(categorias)) {
+      if (!cfg.keywords.includes(titulo)) continue;
+
+      const dias = diffBusinessDays(new Date(t.BeginDate), now);
+      const limite = Math.ceil(cfg.slaRef * 0.8);
+
+      if (dias > cfg.slaRef) resumo[grupo].vencido++;
+      else if (dias >= limite) resumo[grupo].proximoVencer++;
+      else resumo[grupo].noPrazo++;
+    }
+  }
+  return resumo;
+}
+
+// ================= BUSINESS RC (INALTERADO) =================
+async function buildResult(req) {
+  const filtroEmail = req.query.user;
+  const filtroEtapa = req.query.etapa;
+
+  const rcsResp = await httpGetJson(`${BASE_URL}/requisicao`);
+  let rcs = asArray(rcsResp);
+
+  if (filtroEmail) {
+    const emailNorm = normalize(filtroEmail);
+    rcs = rcs.filter(r => normalize(r.EmialOwner) === emailNorm);
+  }
+
+  const levelC = rcs.filter(
+    r => r.Level === "C" && r._RequestInternalId
+  );
+
+  const xml = await httpGetText(TASKS_URL);
+  const tasks = parseTasksXml(xml);
+  const map = new Map();
+  for (const t of tasks) {
+    if (!map.has(t.ParentWorkspace_InternalId)) {
+      map.set(t.ParentWorkspace_InternalId, []);
+    }
+    map.get(t.ParentWorkspace_InternalId).push(t);
+  }
+  
+  const slaGlobal = novoResumo();
+
+  for (const rc of levelC) {
+    const ws =
+      rc.ParentWorkspace_InternalId ||
+      rc._RequestInternalId ||
+      rc.Workspace_InternalId;
+
+    const rcTasks = map.get(ws) || [];
+
+    acumular(slaGlobal, calcularSlaTasks(rcTasks, filtroEtapa));
+  }
+
+  return { slaResumo: slaGlobal };
+}
+
+// ================= ENDPOINT RC (INALTERADO) =================
+app.get("/mendix/rc", async (req, res) => {
+  try {
+    res.json(await buildResult(req));
+  } catch (e) {
+    res.status(500).json({
+      error: "Erro ao calcular SLA",
+      message: e.message,
+    });
+  }
+});
+
+
+// ==========================================================
+// =============== 🔥 ENDPOINT NOVO 🔥 ======================
+// ==========================================================
+
+function matchCategoriaStrict(tituloOriginal) {
+  const tituloNorm = normalize(tituloOriginal);
+
+  for (const [grupo, cfg] of Object.entries(categorias)) {
+    for (const keywordNorm of cfg.keywords) {
+      if (tituloNorm === keywordNorm) {
+        return grupo;
+      }
+    }
+  }
+
+  return null;
+}
+
+
+// Função NOVA – não reutiliza lógica do RC
+function calcularSlaProcessoPorWs(tasks) {
+  const now = new Date();
+
+  const resultado = {
+    juridico: { dias: 0, previsto: categorias.juridico.slaRef },
+    suprimentos: { dias: 0, previsto: categorias.suprimentos.slaRef },
+    tecnico: { dias: 0, previsto: categorias.tecnico.slaRef },
+  };
+
+  for (const t of tasks) {
+    // REGRA ABSOLUTA
+    if (!t.BeginDate) continue;
+
+    const tituloNorm = normalize(t.Title);
+    const grupo = matchCategoriaStrict(tituloNorm);
+
+    // 🔥 FORA DAS CATEGORIAS = NÃO EXISTE
+    if (!grupo) continue;
+
+    const inicio = new Date(t.BeginDate);
+    const fim = t.EndDateTime ? new Date(t.EndDateTime) : now;
+
+    let dias = diffBusinessDays(inicio, fim);
+    if (dias < 1) dias = 1;
+    console.log(dias)
+    resultado[grupo].dias += dias;
+  }
+
+  return resultado;
+}
+
+
+// Endpoint NOVO
+app.get("/mendix/sla-processo", async (req, res) => {
+  try {
+    const ws = req.query.ws;
+    if (!ws) throw new Error("Parâmetro ?ws é obrigatório");
+
+    const xml = await httpGetText(TASKS_URL);
+    const tasks = parseTasksXml(xml).filter(
+      t => t.ParentWorkspace_InternalId === ws
+    );
+
+    const slaPorGrupo = calcularSlaProcessoPorWs(tasks);
+
+    const slaTotalProcesso = {
+      dias:
+        slaPorGrupo.juridico.dias +
+        slaPorGrupo.suprimentos.dias +
+        slaPorGrupo.tecnico.dias,
+      previsto:
+        categorias.juridico.slaRef +
+        categorias.suprimentos.slaRef +
+        categorias.tecnico.slaRef,
+    };
+
+    res.json({ slaPorGrupo, slaTotalProcesso });
+  } catch (e) {
+    res.status(400).json({
+      error: "Erro ao calcular SLA do processo",
+      message: e.message,
+    });
+  }
+});
+
+// ==========================================================
+// ============ 🔥 ENDPOINT KEYWORDS (NOVO) 🔥 ==============
+// ==========================================================
+
+// achata keywords mantendo normalização
+const keywordsFlat = Object.values(categorias)
+  .flatMap(c => c.keywords);
+
+// conta keywords nas tasks (SEM SLA, SEM RC)
+async function contarKeywordsTasks() {
+  const xml = await httpGetText(TASKS_URL);
+  const tasks = parseTasksXml(xml);
+
+  const contador = {};
+
+  for (const t of tasks) {
+    if (!t.Title) continue;
+
+    const titleNorm = normalize(t.Title);
+
+    for (const kw of keywordsFlat) {
+      if (titleNorm === kw) {
+        contador[kw] = (contador[kw] || 0) + 1;
+      }
+    }
+  }
+
+  return Object.entries(contador).map(([keyword, count]) => ({
+    keyword,
+    count,
+  }));
+}
+
+// endpoint novo
+app.get("/mendix/tasks/keywords", async (req, res) => {
+  try {
+    const data = await contarKeywordsTasks();
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({
+      error: "Erro ao contar keywords das tasks",
+      message: e.message,
+    });
+  }
+});
+
+async function buildResultPorEtapa(req) {
+  const filtroEmail = req.query.user;
+  const now = new Date();
+
+  // ================= RC =================
+  const rcsResp = await httpGetJson(`${BASE_URL}/requisicao`);
+  let rcs = asArray(rcsResp);
+
+  if (filtroEmail) {
+    const emailNorm = normalize(filtroEmail);
+    rcs = rcs.filter(r => normalize(r.EmialOwner) === emailNorm);
+  }
+
+  const levelC = rcs.filter(
+    r => r.Level === "C" && r._RequestInternalId
+  );
+
+  // ================= TASKS =================
+  const xml = await httpGetText(TASKS_URL);
+  const tasks = parseTasksXml(xml);
+
+  const map = new Map();
+  for (const t of tasks) {
+    if (!map.has(t.ParentWorkspace_InternalId)) {
+      map.set(t.ParentWorkspace_InternalId, []);
+    }
+    map.get(t.ParentWorkspace_InternalId).push(t);
+  }
+
+  // ================= KEYWORDS =================
+  const keywords = Object.values(categorias)
+    .flatMap(c => c.keywords); // já normalizadas
+
+  const acumulador = {};
+
+  // ================= PROCESSAMENTO =================
+  for (const rc of levelC) {
+    const ws =
+      rc.ParentWorkspace_InternalId ||
+      rc._RequestInternalId ||
+      rc.Workspace_InternalId;
+
+    const rcTasks = map.get(ws) || [];
+
+    for (const task of rcTasks) {
+      if (!task.BeginDate) continue;
+      if (task.EndDateTime) continue;
+
+      const titulo = normalize(task.Title);
+
+      for (const kw of keywords) {
+        if (titulo !== kw) continue;
+
+        const dias = diffBusinessDays(
+          new Date(task.BeginDate),
+          now
+        );
+
+        if (!acumulador[kw]) {
+          acumulador[kw] = { somaDias: 0, total: 0 };
+        }
+
+        acumulador[kw].somaDias += dias;
+        acumulador[kw].total += 1;
+      }
+    }
+  }
+
+  // ================= RESULTADO =================
+  return Object.entries(acumulador).map(([etapa, v]) => ({
+    etapa,
+    mediaDias: Number((v.somaDias / v.total).toFixed(2)),
+    totalTasks: v.total,
+  }));
+}
+
+app.get("/mendix/etapas/media", async (req, res) => {
+  try {
+    const data = await buildResultPorEtapa(req);
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({
+      error: "Erro ao calcular média por etapa",
+      message: e.message,
+    });
+  }
+});
+
+// ================= START =================
+app.listen(PORT, () => {
+  console.log(`[${ts()}] API rodando na porta ${PORT}`);
+});

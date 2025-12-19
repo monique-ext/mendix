@@ -1,0 +1,43 @@
+trigger:
+  - main
+  - master
+
+variables:
+  acrName: acrspicdev
+  imageName: mendix-sla
+  dockerfilePath: Dockerfile
+  tag: $(Build.BuildId)
+
+pool:
+  vmImage: ubuntu-latest
+
+steps:
+  # 🔐 Login no Azure (Service Connection)
+  - task: AzureCLI@2
+    displayName: "Login no Azure"
+    inputs:
+      azureSubscription: "AZURE-SERVICE-CONNECTION"
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        az acr login --name $(acrName)
+
+  # 🐳 Build da imagem
+  - task: Docker@2
+    displayName: "Build da imagem Docker"
+    inputs:
+      command: build
+      dockerfile: $(dockerfilePath)
+      repository: $(imageName)
+      tags: |
+        $(tag)
+
+  # 📤 Push para o ACR
+  - task: Docker@2
+    displayName: "Push da imagem para ACR"
+    inputs:
+      command: push
+      repository: $(imageName)
+      containerRegistry: $(acrName)
+      tags: |
+        $(tag)

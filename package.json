@@ -1,0 +1,13 @@
+{
+  "name": "mendix-sla",
+  "version": "1.0.0",
+  "description": "API SLA Mendix",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^5.2.1",
+    "node-fetch": "^2.7.0"
+  }
+}
