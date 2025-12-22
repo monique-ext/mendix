@@ -165,7 +165,7 @@ function diffBusinessDays(start, end) {
 // ================= SLA RC (INALTERADO) =================
 function novoResumo() {
   return {
-    Juridico: { noPrazo: 0, proximoVencer: 0, vencido: 0 },
+    uridico: { noPrazo: 0, proximoVencer: 0, vencido: 0 },
     Suprimentos: { noPrazo: 0, proximoVencer: 0, vencido: 0 },
     Tecnico: { noPrazo: 0, proximoVencer: 0, vencido: 0 },
   };
@@ -447,17 +447,15 @@ app.get("/mendix/tasks/keywords", async (req, res) => {
 async function buildResultPorEtapa(req) {
   const filtroEmail = req.query.user;
   const now = new Date();
-
   // ================= RC =================
   const rcsResp = await httpGetJson(`${BASE_URL}/requisicao`);
   let rcs = asArray(rcsResp);
-
+  
   if (filtroEmail) {
     const emailNorm = normalize(filtroEmail);
     rcs = rcs.filter(r => normalize(r.EmialOwner) === emailNorm);
   }
 
-  console.log(emailNorm)
   const levelC = rcs.filter(
     r => r.Level === "C" && r._RequestInternalId
   );
