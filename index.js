@@ -158,6 +158,7 @@ function diffBusinessDays(start, end) {
     if (!isWeekend(cur)) count++;
     cur.setDate(cur.getDate() + 1);
   }
+
   return count;
 }
 
@@ -283,33 +284,31 @@ function calcularSlaProcessoPorWs(tasks) {
   const now = new Date();
 
   const resultado = {
-    juridico: { dias: 0, previsto: categorias.juridico.slaRef },
-    suprimentos: { dias: 0, previsto: categorias.suprimentos.slaRef },
-    tecnico: { dias: 0, previsto: categorias.tecnico.slaRef },
+    juridico: { dias: 0, previsto: categorias.Juridico.slaRef },
+    suprimentos: { dias: 0, previsto: categorias.Suprimentos.slaRef },
+    tecnico: { dias: 0, previsto: categorias.Tecnico.slaRef },
   };
 
   for (const t of tasks) {
-    // REGRA ABSOLUTA
     if (!t.BeginDate) continue;
 
     const tituloNorm = normalize(t.Title);
     const grupo = matchCategoriaStrict(tituloNorm);
-
-    // 🔥 FORA DAS CATEGORIAS = NÃO EXISTE
     if (!grupo) continue;
+
+    const grupoKey = grupo.toLowerCase(); // 🔥 AQUI
 
     const inicio = new Date(t.BeginDate);
     const fim = t.EndDateTime ? new Date(t.EndDateTime) : now;
 
     let dias = diffBusinessDays(inicio, fim);
     if (dias < 1) dias = 1;
-    console.log(dias)
-    resultado[grupo].dias += dias;
+
+    resultado[grupoKey].dias += dias;
   }
 
   return resultado;
 }
-
 
 // Endpoint NOVO
 app.get("/mendix/sla-processo", async (req, res) => {
@@ -321,19 +320,19 @@ app.get("/mendix/sla-processo", async (req, res) => {
     const tasks = parseTasksXml(xml).filter(
       t => t.ParentWorkspace_InternalId === ws
     );
-
     const slaPorGrupo = calcularSlaProcessoPorWs(tasks);
-
+    console.log(slaPorGrupo)
     const slaTotalProcesso = {
       dias:
         slaPorGrupo.juridico.dias +
         slaPorGrupo.suprimentos.dias +
         slaPorGrupo.tecnico.dias,
       previsto:
-        categorias.juridico.slaRef +
-        categorias.suprimentos.slaRef +
-        categorias.tecnico.slaRef,
+        categorias.Juridico.slaRef +
+        categorias.Suprimentos.slaRef +
+        categorias.Tecnico.slaRef,
     };
+
 
     res.json({ slaPorGrupo, slaTotalProcesso });
   } catch (e) {
