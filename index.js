@@ -165,9 +165,9 @@ function diffBusinessDays(start, end) {
 // ================= SLA RC (INALTERADO) =================
 function novoResumo() {
   return {
-    juridico: { noPrazo: 0, proximoVencer: 0, vencido: 0 },
-    suprimentos: { noPrazo: 0, proximoVencer: 0, vencido: 0 },
-    tecnico: { noPrazo: 0, proximoVencer: 0, vencido: 0 },
+    Juridico: { noPrazo: 0, proximoVencer: 0, vencido: 0 },
+    Suprimentos: { noPrazo: 0, proximoVencer: 0, vencido: 0 },
+    Tecnico: { noPrazo: 0, proximoVencer: 0, vencido: 0 },
   };
 }
 
@@ -208,7 +208,6 @@ function calcularSlaTasks(tasks, filtroEtapa) {
 async function buildResult(req) {
   const filtroEmail = req.query.user;
   const filtroEtapa = req.query.etapa;
-
   const rcsResp = await httpGetJson(`${BASE_URL}/requisicao`);
   let rcs = asArray(rcsResp);
 
@@ -243,6 +242,7 @@ async function buildResult(req) {
 
     acumular(slaGlobal, calcularSlaTasks(rcTasks, filtroEtapa));
   }
+  console.log(slaGlobal)
 
   return { slaResumo: slaGlobal };
 }
@@ -457,6 +457,7 @@ async function buildResultPorEtapa(req) {
     rcs = rcs.filter(r => normalize(r.EmialOwner) === emailNorm);
   }
 
+  console.log(emailNorm)
   const levelC = rcs.filter(
     r => r.Level === "C" && r._RequestInternalId
   );
@@ -464,7 +465,6 @@ async function buildResultPorEtapa(req) {
   // ================= TASKS =================
   const xml = await httpGetText(TASKS_URL);
   const tasks = parseTasksXml(xml);
-
   const map = new Map();
   for (const t of tasks) {
     if (!map.has(t.ParentWorkspace_InternalId)) {
