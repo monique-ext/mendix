@@ -539,10 +539,13 @@ async function buildResultPorEtapa(req) {
 
   // ================= RESULTADO =================
   return Object.entries(acumulador).map(([etapa, v]) => ({
-    etapa,
+    etapa: etapa === 'discussao de minuta'
+      ? 'Discussão de Minuta'
+      : etapa,
     mediaDias: Number((v.somaDias / v.total).toFixed(2)),
     totalTasks: v.total,
   }));
+
 }
 
 app.get("/mendix/etapas/media", async (req, res) => {
