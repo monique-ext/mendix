@@ -242,9 +242,14 @@ async function buildResult(req) {
 
     acumular(slaGlobal, calcularSlaTasks(rcTasks, filtroEtapa));
   }
-  console.log(slaGlobal)
 
-  return { slaResumo: slaGlobal };
+  const slaResumo = {
+    juridico: slaGlobal.Juridico,
+    suprimentos: slaGlobal.Suprimentos,
+    tecnico: slaGlobal.Tecnico,
+  };
+
+  return { slaResumo };
 }
 
 // ================= ENDPOINT RC (INALTERADO) =================
@@ -450,7 +455,7 @@ async function buildResultPorEtapa(req) {
   // ================= RC =================
   const rcsResp = await httpGetJson(`${BASE_URL}/requisicao`);
   let rcs = asArray(rcsResp);
-  
+
   if (filtroEmail) {
     const emailNorm = normalize(filtroEmail);
     rcs = rcs.filter(r => normalize(r.EmialOwner) === emailNorm);
