@@ -429,6 +429,9 @@ async function contarKeywordsTasks(req) {
     for (const t of rcTasks) {
       if (!t?.Title) continue;
 
+      if (!t.BeginDate) continue;
+      if (t.EndDateTime !== null) continue;
+
       const titleNorm = normalize(t.Title);
 
       // filtro opcional por etapa
