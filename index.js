@@ -32,22 +32,41 @@ const categorias = {
   Juridico: {
     slaRef: 3,
     keywords: [
-      "Elaboração de Minuta",
-      "Discussão de Minuta",
-      "Assinatura",
-      'Analysis and Data Collection and Strategy Definition'
+      "Elaboração de Minuta",//1
+      "Discussão de Minuta",//1
+      "Assinatura",//1
+      "Elaboração de Contrato (ELAW)", //1
+      "Contrato em Chancela (ELAW)",//1
+      "Contrato em discussão Jurídica (ELAW)",//1
+      "Contrato em Aprovação (ELAW)",//1
+      "Carry out Legal steps (If it is a Contract)"//1
     ].map(normalize),
   },
   Suprimentos: {
     slaRef: 25,
     keywords: [
-      "RFT",
-      "Definição de Estratégia de compras",
-      "Conexão do Fornecedor",
-      "Solicitação de propostas técnicas revisadas",
-      "Análise Comercial / Negociação",
-      "Emissão do Contrato SAP",
-      "Overall",
+      "RFT", //12
+      "Definição de Estratégia de compras", //2
+      "Conexão do Fornecedor", //2
+      "Solicitação de propostas técnicas revisadas", //3
+      "Análise Comercial / Negociação", //3
+      "Emissão do Contrato SAP", //1
+      "Overall", //2
+      "Analysis and Data Collection and Strategy Definition", //2
+      "Finalize Sourcing Project  no Ariba - Mudar o Status do Projeto para Concluído", //1
+      "Contrato em Assinatura (Docusign)", //1
+      "Evaluate Scenario for Awards", //3
+      "Preencher na Capa do Projeto  o campo valor final da negociação", //2
+      "Award supplier", //1
+      "Top Signed contract", //1
+      "Operating Contract", //1
+      "Gerar Pedido no Buying - Enviar Cotações ao Sistema Externo", //2
+      "Finalização do Projeto", //1
+      "Elaborar Plano de Ação", //2
+      "Discussão do Plano de Ação", //2
+      "Atualizar Equipe do Projeto", //2
+      "Preparar Solicitação de Sourcing e Verificar Documentos Adicionais", //2
+      "Alternative Procurement Method" //3
     ].map(normalize),
   },
   Tecnico: {
@@ -326,7 +345,7 @@ app.get("/mendix/sla-processo", async (req, res) => {
       t => t.ParentWorkspace_InternalId === ws
     );
     const slaPorGrupo = calcularSlaProcessoPorWs(tasks);
-    console.log(slaPorGrupo)
+
     const slaTotalProcesso = {
       dias:
         slaPorGrupo.juridico.dias +
