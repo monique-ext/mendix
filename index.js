@@ -165,7 +165,7 @@ function diffBusinessDays(start, end) {
 // ================= SLA RC (INALTERADO) =================
 function novoResumo() {
   return {
-    uridico: { noPrazo: 0, proximoVencer: 0, vencido: 0 },
+    Juridico: { noPrazo: 0, proximoVencer: 0, vencido: 0 },
     Suprimentos: { noPrazo: 0, proximoVencer: 0, vencido: 0 },
     Tecnico: { noPrazo: 0, proximoVencer: 0, vencido: 0 },
   };
