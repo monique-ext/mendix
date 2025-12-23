@@ -655,6 +655,93 @@ app.get("/mendix/index", async (req, res) => {
   }
 });
 
+async function timeLine(ws) {
+  const etapasMap = {
+    'RFT': ['RFT'],
+    'Elaboração de Minuta': ['Elaboração de Minuta'],
+    'Discussão de Minuta': [
+      'Contrato em discussão Jurídica (ELAW)'
+    ],
+    'Assinatura': [
+      'Contrato em Assinatura (Docusign)',
+      'Top Signed contract'
+    ],
+    'Definição de Estratégia de compras': [
+      'Definição de Estratégia de compras'
+    ],
+    'Conexão do Fornecedor': [
+      'Conexão do Fornecedor'
+    ],
+    'Solicitação de propostas técnicas revisadas': [
+      'Solicitação de propostas técnicas revisadas'
+    ],
+    'Análise Comercial / Negociação': [
+      'Preencher na Capa do Projeto  o campo valor final da negociação'
+    ],
+    'Emissão do Contrato SAP': [
+      'Operating Contract'
+    ],
+    'Overall': ['Overall'],
+    'Avaliação Técnica': ['Avaliação Técnica'],
+    'Avaliação das propostas técnicas revisadas': [
+      'Avaliação das propostas técnicas revisadas'
+    ],
+    'Contrato em Assinatura (Docusign)': [
+      'Contrato em Assinatura (Docusign)'
+    ]
+  };
+
+  const xml = await httpGetText(TASKS_URL);
+  const tasks = parseTasksXml(xml).filter(
+    t => t.ParentWorkspace_InternalId === ws
+  );
+
+  const resultado = [];
+
+  for (const [etapa, titulosValidos] of Object.entries(etapasMap)) {
+    const task = tasks.find(t =>
+      titulosValidos.includes(t.Title)
+    );
+
+    let status = '-';
+    let start = '-';
+    let end = '-';
+
+    if (task?.BeginDate && task?.EndDateTime) {
+      status = 'DONE';
+      start = task.BeginDate;
+      end = task.EndDateTime;
+    } else if (task?.BeginDate) {
+      status = 'ONGOING';
+      start = task.BeginDate;
+    }
+
+    resultado.push({
+      title: etapa,
+      start,
+      end,
+      status
+    });
+  }
+
+  return resultado;
+}
+
+app.get("/mendix/timeLine", async (req, res) => {
+  try {
+    const ws = req.query.ws;
+    if (!ws) throw new Error("Parâmetro ?ws é obrigatório");
+
+    const data = await timeLine(ws);
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({
+      error: "Erro ao contar keywords das tasks",
+      message: e.message,
+    });
+  }
+});
+
 // ================= START =================
 app.listen(PORT, () => {
   console.log(`[${ts()}] API rodando na porta ${PORT}`);
