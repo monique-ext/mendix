@@ -542,7 +542,7 @@ async function buildResultPorEtapa(req) {
     etapa: etapa === 'discussao de minuta'
       ? 'Discussão de Minuta'
       : etapa,
-    mediaDias: Number((v.somaDias / v.total).toFixed(2)),
+    mediaDias: Math.trunc(v.somaDias / v.total),
     totalTasks: v.total,
   }));
 
@@ -555,6 +555,101 @@ app.get("/mendix/etapas/media", async (req, res) => {
   } catch (e) {
     res.status(500).json({
       error: "Erro ao calcular média por etapa",
+      message: e.message,
+    });
+  }
+});
+
+async function index(req) {
+  const filtroEmail = req.query.user;
+  const filtroEtapa = req.query.etapa
+    ? normalize(req.query.etapa)
+    : null;
+  const now = new Date();
+
+  // ================= RC =================
+  const rcsResp = await httpGetJson(`${BASE_URL}/requisicao`);
+  let rcs = asArray(rcsResp);
+
+  if (filtroEmail) {
+    const emailNorm = normalize(filtroEmail);
+    rcs = rcs.filter(r => normalize(r.EmialOwner) === emailNorm);
+  }
+
+  const levelC = rcs.filter(
+    r => r.Level === "C" && r._RequestInternalId
+  );
+
+  // ================= TASKS =================
+  const xml = await httpGetText(TASKS_URL);
+  const tasks = parseTasksXml(xml);
+
+  const map = new Map();
+  for (const t of tasks) {
+    if (!map.has(t.ParentWorkspace_InternalId)) {
+      map.set(t.ParentWorkspace_InternalId, []);
+    }
+    map.get(t.ParentWorkspace_InternalId).push(t);
+  }
+
+  // ================= KEYWORDS =================
+  const keywords = Object.values(categorias)
+    .flatMap(c => c.keywords); // já normalizadas
+
+  // ================= RESULTADO =================
+  const resultado = [];
+
+  // ================= PROCESSAMENTO =================
+  for (const rc of levelC) {
+    const ws =
+      rc.ParentWorkspace_InternalId ||
+      rc._RequestInternalId ||
+      rc.Workspace_InternalId;
+
+    const rcTasks = map.get(ws) || [];
+
+    for (const task of rcTasks) {
+      if (!task.BeginDate) continue;
+      if (task.EndDateTime) continue;
+
+      const tituloNorm = normalize(task.Title);
+
+      // filtro opcional por etapa
+      if (filtroEtapa && tituloNorm !== filtroEtapa) continue;
+
+      for (const kw of keywords) {
+        if (tituloNorm !== kw) continue;
+
+        const saldo = diffBusinessDays(
+          new Date(task.BeginDate),
+          now
+        );
+
+        resultado.push({
+          ws: rc._RequestInternalId,
+          etapa: task.Title,
+          titulo: rc.Titulo,
+          responsavel: rc.Responsavel ?? null,
+          level: rc.Level,
+          saldoUtilizado: saldo,
+          saldo: rc.Saldo
+        });
+      }
+    }
+  }
+
+  return resultado;
+}
+
+// ================= ENDPOINT =================
+
+app.get("/mendix/index", async (req, res) => {
+  try {
+    const data = await index(req);
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({
+      error: "Erro ao contar keywords das tasks",
       message: e.message,
     });
   }
