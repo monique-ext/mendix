@@ -41,7 +41,7 @@ const categorias = {
       "Contrato em Aprovação (ELAW)",//1
       "Carry out Legal steps (If it is a Contract)"//1
     ].map(normalize),
-  },
+  },  
   Suprimentos: {
     slaRef: 25,
     keywords: [
@@ -691,6 +691,25 @@ async function timeLine(ws) {
     ]
   };
 
+  const etapaToGrupo = {
+    'RFT': 'suprimentos',
+
+    'Elaboração de Minuta': 'juridico',
+    'Discussão de Minuta': 'juridico',
+    'Assinatura': 'juridico',
+    'Contrato em Assinatura (Docusign)': 'juridico',
+
+    'Definição de Estratégia de compras': 'suprimentos',
+    'Conexão do Fornecedor': 'suprimentos',
+    'Solicitação de propostas técnicas revisadas': 'suprimentos',
+    'Análise Comercial / Negociação': 'suprimentos',
+    'Emissão do Contrato SAP': 'suprimentos',
+    'Overall': 'suprimentos',
+
+    'Avaliação Técnica': 'tecnico',
+    'Avaliação das propostas técnicas revisadas': 'tecnico'
+  };
+
   const xml = await httpGetText(TASKS_URL);
   const tasks = parseTasksXml(xml).filter(
     t => t.ParentWorkspace_InternalId === ws
@@ -703,9 +722,9 @@ async function timeLine(ws) {
       titulosValidos.includes(t.Title)
     );
 
-    let status = '-';
-    let start = '-';
-    let end = '-';
+    let status = '';
+    let start = '';
+    let end = '';
 
     if (task?.BeginDate && task?.EndDateTime) {
       status = 'DONE';
@@ -717,7 +736,8 @@ async function timeLine(ws) {
     }
 
     resultado.push({
-      title: etapa,
+      nomeEtapa: etapa,
+      grupoEtapa: etapaToGrupo[etapa] || '',
       start,
       end,
       status
