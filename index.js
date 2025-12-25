@@ -691,23 +691,24 @@ async function timeLine(ws) {
     ]
   };
 
+  // 🔒 ETAPA → GRUPO (LABEL FINAL)
   const etapaToGrupo = {
-    'RFT': 'suprimentos',
+    'RFT': 'Suprimentos',
 
-    'Elaboração de Minuta': 'juridico',
-    'Discussão de Minuta': 'juridico',
-    'Assinatura': 'juridico',
-    'Contrato em Assinatura (Docusign)': 'juridico',
+    'Elaboração de Minuta': 'Jurídico',
+    'Discussão de Minuta': 'Jurídico',
+    'Assinatura': 'Jurídico',
+    'Contrato em Assinatura (Docusign)': 'Jurídico',
 
-    'Definição de Estratégia de compras': 'suprimentos',
-    'Conexão do Fornecedor': 'suprimentos',
-    'Solicitação de propostas técnicas revisadas': 'suprimentos',
-    'Análise Comercial / Negociação': 'suprimentos',
-    'Emissão do Contrato SAP': 'suprimentos',
-    'Overall': 'suprimentos',
+    'Definição de Estratégia de compras': 'Suprimentos',
+    'Conexão do Fornecedor': 'Suprimentos',
+    'Solicitação de propostas técnicas revisadas': 'Suprimentos',
+    'Análise Comercial / Negociação': 'Suprimentos',
+    'Emissão do Contrato SAP': 'Suprimentos',
+    'Overall': 'Suprimentos',
 
-    'Avaliação Técnica': 'tecnico',
-    'Avaliação das propostas técnicas revisadas': 'tecnico'
+    'Avaliação Técnica': 'Técnico',
+    'Avaliação das propostas técnicas revisadas': 'Técnico'
   };
 
   const xml = await httpGetText(TASKS_URL);
@@ -717,29 +718,30 @@ async function timeLine(ws) {
 
   const resultado = [];
 
+  // 🔥 ORDEM MANTIDA
   for (const [etapa, titulosValidos] of Object.entries(etapasMap)) {
     const task = tasks.find(t =>
       titulosValidos.includes(t.Title)
     );
 
     let status = '';
-    let start = '';
-    let end = '';
+    let startDate = '';
+    let endDate = '';
 
     if (task?.BeginDate && task?.EndDateTime) {
       status = 'DONE';
-      start = task.BeginDate;
-      end = task.EndDateTime;
+      startDate = task.BeginDate;
+      endDate = task.EndDateTime;
     } else if (task?.BeginDate) {
       status = 'ONGOING';
-      start = task.BeginDate;
+      startDate = task.BeginDate;
     }
 
     resultado.push({
-      nomeEtapa: etapa,
       grupoEtapa: etapaToGrupo[etapa] || '',
-      start,
-      end,
+      nomeEtapa: etapa,
+      startDate,
+      endDate,
       status
     });
   }
