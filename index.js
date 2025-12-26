@@ -344,21 +344,50 @@ app.get("/mendix/sla-processo", async (req, res) => {
     const tasks = parseTasksXml(xml).filter(
       t => t.ParentWorkspace_InternalId === ws
     );
-    const slaPorGrupo = calcularSlaProcessoPorWs(tasks);
+
+    const slaPorGrupoCalc = calcularSlaProcessoPorWs(tasks);
 
     const slaTotalProcesso = {
       dias:
-        slaPorGrupo.juridico.dias +
-        slaPorGrupo.suprimentos.dias +
-        slaPorGrupo.tecnico.dias,
+        slaPorGrupoCalc.juridico.dias +
+        slaPorGrupoCalc.suprimentos.dias +
+        slaPorGrupoCalc.tecnico.dias,
       previsto:
         categorias.Juridico.slaRef +
         categorias.Suprimentos.slaRef +
         categorias.Tecnico.slaRef,
     };
 
+    const slaPorGrupo = [
+      {
+        Nome: "SLA total do processo",
+        dias: slaTotalProcesso.dias,
+        previsto: slaTotalProcesso.previsto
+      },
+      {
+        Nome: "Suprimentos",
+        dias: slaPorGrupoCalc.suprimentos.dias,
+        previsto: slaPorGrupoCalc.suprimentos.previsto
+      },
+      {
+        Nome: "Técnico",
+        dias: slaPorGrupoCalc.tecnico.dias,
+        previsto: slaPorGrupoCalc.tecnico.previsto
+      },
+      {
+        Nome: "Jurídico",
+        dias: slaPorGrupoCalc.juridico.dias,
+        previsto: slaPorGrupoCalc.juridico.previsto
+      },
+      {
+        Nome: "Governança",
+        dias: 0,
+        previsto: 0
+      }
+    ];
 
-    res.json({ slaPorGrupo, slaTotalProcesso });
+    res.json({ slaPorGrupo });
+
   } catch (e) {
     res.status(400).json({
       error: "Erro ao calcular SLA do processo",
@@ -731,11 +760,11 @@ async function timeLine(ws) {
     let end = null;
 
     if (task?.BeginDate && task?.EndDateTime) {
-      status = 'DONE';
+      status = 'Finalizada';
       start = task.BeginDate;
       end = task.EndDateTime;
     } else if (task?.BeginDate) {
-      status = 'ONGOING';
+      status = 'Em andamento';
       start = task.BeginDate;
     }
 
