@@ -685,57 +685,43 @@ app.get("/mendix/index", async (req, res) => {
 });
 
 async function timeLine(ws) {
-  // ================= MAPA DE ETAPAS (ORDEM É SAGRADA) =================
+  // ================= MAPA DE ETAPAS (ORDEM SAGRADA) =================
   const etapasMap = {
+    // SUPRIMENTOS
     'RFT': ['RFT'],
+    'Definição de Estratégia de compras': ['Definição de Estratégia de compras'],
+    'Conexão do Fornecedor': ['Conexão do Fornecedor'],
+    'Solicitação de propostas técnicas revisadas': ['Solicitação de propostas técnicas revisadas'],
+    'Análise Comercial / Negociação': ['Preencher na Capa do Projeto  o campo valor final da negociação'],
+    'Emissão do Contrato SAP': ['Operating Contract'],
+    'Overall': ['Overall'],
+
+    // JURÍDICO
     'Elaboração de Minuta': ['Elaboração de Minuta'],
-    'Discussão de Minuta': [
-      'Contrato em discussão Jurídica (ELAW)'
-    ],
+    'Discussão de Minuta': ['Discussão de Minuta'],
     'Assinatura': [
       'Contrato em Assinatura (Docusign)',
       'Top Signed contract'
     ],
-    'Definição de Estratégia de compras': [
-      'Definição de Estratégia de compras'
-    ],
-    'Conexão do Fornecedor': [
-      'Conexão do Fornecedor'
-    ],
-    'Solicitação de propostas técnicas revisadas': [
-      'Solicitação de propostas técnicas revisadas'
-    ],
-    'Análise Comercial / Negociação': [
-      'Preencher na Capa do Projeto  o campo valor final da negociação'
-    ],
-    'Emissão do Contrato SAP': [
-      'Operating Contract'
-    ],
-    'Overall': ['Overall'],
+
+    // TÉCNICO
     'Avaliação Técnica': ['Avaliação Técnica'],
-    'Avaliação das propostas técnicas revisadas': [
-      'Avaliação das propostas técnicas revisadas'
-    ],
-    'Contrato em Assinatura (Docusign)': [
-      'Contrato em Assinatura (Docusign)'
-    ]
+    'Avaliação das propostas técnicas revisadas': ['Avaliação das propostas técnicas revisadas']
   };
 
   // ================= ETAPA → GRUPO =================
   const etapaToGrupo = {
     'RFT': 'Suprimentos',
-
-    'Elaboração de Minuta': 'Jurídico',
-    'Discussão de Minuta': 'Jurídico',
-    'Assinatura': 'Jurídico',
-    'Contrato em Assinatura (Docusign)': 'Jurídico',
-
     'Definição de Estratégia de compras': 'Suprimentos',
     'Conexão do Fornecedor': 'Suprimentos',
     'Solicitação de propostas técnicas revisadas': 'Suprimentos',
     'Análise Comercial / Negociação': 'Suprimentos',
     'Emissão do Contrato SAP': 'Suprimentos',
     'Overall': 'Suprimentos',
+
+    'Elaboração de Minuta': 'Jurídico',
+    'Discussão de Minuta': 'Jurídico',
+    'Assinatura': 'Jurídico',
 
     'Avaliação Técnica': 'Técnico',
     'Avaliação das propostas técnicas revisadas': 'Técnico'
@@ -751,9 +737,13 @@ async function timeLine(ws) {
   const resultadoLinear = [];
 
   for (const [etapa, titulosValidos] of Object.entries(etapasMap)) {
-    const task = tasks.find(t =>
-      titulosValidos.includes(t.Title)
-    );
+
+    const titulosNorm = titulosValidos.map(normalize);
+
+    const task = tasks.find(t => {
+      if (!t.Title) return false;
+      return titulosNorm.includes(normalize(t.Title));
+    });
 
     let status = null;
     let start = null;
@@ -798,6 +788,7 @@ async function timeLine(ws) {
 
   return Object.values(agrupado);
 }
+
 
 app.get("/mendix/timeLine", async (req, res) => {
   try {
