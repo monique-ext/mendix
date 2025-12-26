@@ -656,6 +656,7 @@ app.get("/mendix/index", async (req, res) => {
 });
 
 async function timeLine(ws) {
+  // ================= MAPA DE ETAPAS (ORDEM É SAGRADA) =================
   const etapasMap = {
     'RFT': ['RFT'],
     'Elaboração de Minuta': ['Elaboração de Minuta'],
@@ -691,7 +692,7 @@ async function timeLine(ws) {
     ]
   };
 
-  // 🔒 ETAPA → GRUPO (LABEL FINAL)
+  // ================= ETAPA → GRUPO =================
   const etapaToGrupo = {
     'RFT': 'Suprimentos',
 
@@ -711,42 +712,62 @@ async function timeLine(ws) {
     'Avaliação das propostas técnicas revisadas': 'Técnico'
   };
 
+  // ================= BUSCA TASKS =================
   const xml = await httpGetText(TASKS_URL);
   const tasks = parseTasksXml(xml).filter(
     t => t.ParentWorkspace_InternalId === ws
   );
 
-  const resultado = [];
+  // ================= MONTA LISTA LINEAR =================
+  const resultadoLinear = [];
 
-  // 🔥 ORDEM MANTIDA
   for (const [etapa, titulosValidos] of Object.entries(etapasMap)) {
     const task = tasks.find(t =>
       titulosValidos.includes(t.Title)
     );
 
-    let status = '';
-    let startDate = '';
-    let endDate = '';
+    let status = null;
+    let start = null;
+    let end = null;
 
     if (task?.BeginDate && task?.EndDateTime) {
       status = 'DONE';
-      startDate = task.BeginDate;
-      endDate = task.EndDateTime;
+      start = task.BeginDate;
+      end = task.EndDateTime;
     } else if (task?.BeginDate) {
       status = 'ONGOING';
-      startDate = task.BeginDate;
+      start = task.BeginDate;
     }
 
-    resultado.push({
-      grupoEtapa: etapaToGrupo[etapa] || '',
+    resultadoLinear.push({
+      grupoEtapa: etapaToGrupo[etapa],
       nomeEtapa: etapa,
-      startDate,
-      endDate,
+      start,
+      end,
       status
     });
   }
 
-  return resultado;
+  // ================= AGRUPA POR GRUPO =================
+  const agrupado = {};
+
+  for (const item of resultadoLinear) {
+    if (!agrupado[item.grupoEtapa]) {
+      agrupado[item.grupoEtapa] = {
+        grupoEtapa: item.grupoEtapa,
+        items: []
+      };
+    }
+
+    agrupado[item.grupoEtapa].items.push({
+      nomeEtapa: item.nomeEtapa,
+      start: item.start,
+      end: item.end,
+      status: item.status
+    });
+  }
+
+  return Object.values(agrupado);
 }
 
 app.get("/mendix/timeLine", async (req, res) => {
