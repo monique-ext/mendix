@@ -692,7 +692,9 @@ async function timeLine(ws) {
     'Definição de Estratégia de compras': ['Definição de Estratégia de compras'],
     'Conexão do Fornecedor': ['Conexão do Fornecedor'],
     'Solicitação de propostas técnicas revisadas': ['Solicitação de propostas técnicas revisadas'],
-    'Análise Comercial / Negociação': ['Preencher na Capa do Projeto  o campo valor final da negociação'],
+    'Análise Comercial / Negociação': [
+      'Preencher na Capa do Projeto  o campo valor final da negociação'
+    ],
     'Emissão do Contrato SAP': ['Operating Contract'],
     'Overall': ['Overall'],
 
@@ -706,7 +708,9 @@ async function timeLine(ws) {
 
     // TÉCNICO
     'Avaliação Técnica': ['Avaliação Técnica'],
-    'Avaliação das propostas técnicas revisadas': ['Avaliação das propostas técnicas revisadas']
+    'Avaliação das propostas técnicas revisadas': [
+      'Avaliação das propostas técnicas revisadas'
+    ]
   };
 
   // ================= ETAPA → GRUPO =================
@@ -729,21 +733,23 @@ async function timeLine(ws) {
 
   // ================= BUSCA TASKS =================
   const xml = await httpGetText(TASKS_URL);
-  const tasks = parseTasksXml(xml).filter(
-    t => t.ParentWorkspace_InternalId === ws
-  );
+  const tasks = parseTasksXml(xml)
+    .filter(t => t.ParentWorkspace_InternalId === ws)
+    .sort((a, b) => {
+      if (!a.BeginDate) return 1;
+      if (!b.BeginDate) return -1;
+      return new Date(a.BeginDate) - new Date(b.BeginDate);
+    });
 
   // ================= MONTA LISTA LINEAR =================
   const resultadoLinear = [];
 
   for (const [etapa, titulosValidos] of Object.entries(etapasMap)) {
-
     const titulosNorm = titulosValidos.map(normalize);
 
-    const task = tasks.find(t => {
-      if (!t.Title) return false;
-      return titulosNorm.includes(normalize(t.Title));
-    });
+    const task = tasks.find(t =>
+      t.Title && titulosNorm.includes(normalize(t.Title))
+    );
 
     let status = null;
     let start = null;
@@ -786,6 +792,19 @@ async function timeLine(ws) {
     });
   }
 
+  // ================= ORDENA DENTRO DO GRUPO =================
+  for (const grupo of Object.values(agrupado)) {
+    grupo.items.sort((a, b) => {
+      if (a.start && b.start) {
+        const diff = new Date(a.start) - new Date(b.start);
+        if (diff !== 0) return diff;
+      }
+      if (a.start && !b.start) return -1;
+      if (!a.start && b.start) return 1;
+      return a.nomeEtapa.localeCompare(b.nomeEtapa, 'pt-BR');
+    });
+  }
+
   return Object.values(agrupado);
 }
 
@@ -796,6 +815,107 @@ app.get("/mendix/timeLine", async (req, res) => {
     if (!ws) throw new Error("Parâmetro ?ws é obrigatório");
 
     const data = await timeLine(ws);
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({
+      error: "Erro ao contar keywords das tasks",
+      message: e.message,
+    });
+  }
+});
+
+async function timelinev2(ws) {
+  const etapasMap = {
+    'RFT': ['RFT'],
+    'Definição de Estratégia de compras': ['Definição de Estratégia de compras'],
+    'Conexão do Fornecedor': ['Conexão do Fornecedor'],
+    'Solicitação de propostas técnicas revisadas': ['Solicitação de propostas técnicas revisadas'],
+    'Análise Comercial / Negociação': [
+      'Preencher na Capa do Projeto  o campo valor final da negociação'
+    ],
+    'Emissão do Contrato SAP': ['Operating Contract'],
+    'Overall': ['Overall'],
+
+    'Elaboração de Minuta': ['Elaboração de Minuta'],
+    'Discussão de Minuta': ['Discussão de Minuta'],
+    'Assinatura': [
+      'Contrato em Assinatura (Docusign)',
+      'Top Signed contract'
+    ],
+
+    'Avaliação Técnica': ['Avaliação Técnica'],
+    'Avaliação das propostas técnicas revisadas': [
+      'Avaliação das propostas técnicas revisadas'
+    ]
+  };
+
+  const etapaToGrupo = {
+    'RFT': 'suprimentos',
+    'Definição de Estratégia de compras': 'suprimentos',
+    'Conexão do Fornecedor': 'suprimentos',
+    'Solicitação de propostas técnicas revisadas': 'suprimentos',
+    'Análise Comercial / Negociação': 'suprimentos',
+    'Emissão do Contrato SAP': 'suprimentos',
+    'Overall': 'suprimentos',
+
+    'Elaboração de Minuta': 'juridico',
+    'Discussão de Minuta': 'juridico',
+    'Assinatura': 'juridico',
+
+    'Avaliação Técnica': 'tecnico',
+    'Avaliação das propostas técnicas revisadas': 'tecnico'
+  };
+
+  const xml = await httpGetText(TASKS_URL);
+  const tasks = parseTasksXml(xml)
+    .filter(t => t.ParentWorkspace_InternalId === ws);
+
+  const resultado = [];
+
+  for (const [etapa, titulos] of Object.entries(etapasMap)) {
+    const titulosNorm = titulos.map(normalize);
+
+    const task = tasks.find(t =>
+      t.Title && titulosNorm.includes(normalize(t.Title))
+    );
+
+    let start = task?.BeginDate || null;
+    let end = task?.EndDateTime || null;
+
+    let status = null;
+    if (start && end) status = 'Finalizada';
+    else if (start) status = 'Em andamento';
+
+    resultado.push({
+      nomeEtapa: etapa,
+      grupoEtapa: etapaToGrupo[etapa],
+      start,
+      end,
+      status
+    });
+  }
+
+  // ORDENA: start (data) → nomeEtapa (alfabética)
+  resultado.sort((a, b) => {
+    if (a.start && b.start) {
+      const diff = new Date(a.start) - new Date(b.start);
+      if (diff !== 0) return diff;
+    }
+    if (a.start && !b.start) return -1;
+    if (!a.start && b.start) return 1;
+
+    return a.nomeEtapa.localeCompare(b.nomeEtapa, 'pt-BR');
+  });
+
+  return resultado;
+}
+
+app.get("/mendix/v2/timeLine", async (req, res) => {
+  try {
+    const ws = req.query.ws;
+    if (!ws) throw new Error("Parâmetro ?ws é obrigatório");
+
+    const data = await timelinev2(ws);
     res.json(data);
   } catch (e) {
     res.status(500).json({
