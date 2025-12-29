@@ -35,38 +35,38 @@ const categorias = {
       "Elaboração de Minuta",//1
       "Discussão de Minuta",//1
       "Assinatura",//1
-      "Elaboração de Contrato (ELAW)", //1
-      "Contrato em Chancela (ELAW)",//1
-      "Contrato em discussão Jurídica (ELAW)",//1
-      "Contrato em Aprovação (ELAW)",//1
-      "Carry out Legal steps (If it is a Contract)"//1
+      // "Elaboração de Contrato (ELAW)", //1
+      // "Contrato em Chancela (ELAW)",//1
+      // "Contrato em discussão Jurídica (ELAW)",//1
+      // "Contrato em Aprovação (ELAW)",//1
+      // "Carry out Legal steps (If it is a Contract)"//1
     ].map(normalize),
-  },  
+  },
   Suprimentos: {
     slaRef: 25,
     keywords: [
-      "RFT", //12
       "Definição de Estratégia de compras", //2
-      "Conexão do Fornecedor", //2
+      "RFT", //12
       "Solicitação de propostas técnicas revisadas", //3
       "Análise Comercial / Negociação", //3
-      "Emissão do Contrato SAP", //1
       "Overall", //2
-      "Analysis and Data Collection and Strategy Definition", //2
-      "Finalize Sourcing Project  no Ariba - Mudar o Status do Projeto para Concluído", //1
-      "Contrato em Assinatura (Docusign)", //1
-      "Evaluate Scenario for Awards", //3
-      "Preencher na Capa do Projeto  o campo valor final da negociação", //2
-      "Award supplier", //1
-      "Top Signed contract", //1
-      "Operating Contract", //1
-      "Gerar Pedido no Buying - Enviar Cotações ao Sistema Externo", //2
-      "Finalização do Projeto", //1
-      "Elaborar Plano de Ação", //2
-      "Discussão do Plano de Ação", //2
-      "Atualizar Equipe do Projeto", //2
-      "Preparar Solicitação de Sourcing e Verificar Documentos Adicionais", //2
-      "Alternative Procurement Method" //3
+      "Emissão do Contrato SAP", //1
+      // "Conexão do Fornecedor", //2
+      // "Analysis and Data Collection and Strategy Definition", //2
+      // "Finalize Sourcing Project  no Ariba - Mudar o Status do Projeto para Concluído", //1
+      // "Contrato em Assinatura (Docusign)", //1
+      // "Evaluate Scenario for Awards", //3
+      // "Preencher na Capa do Projeto  o campo valor final da negociação", //2
+      // "Award supplier", //1
+      // "Top Signed contract", //1
+      // "Operating Contract", //1
+      // "Gerar Pedido no Buying - Enviar Cotações ao Sistema Externo", //2
+      // "Finalização do Projeto", //1
+      // "Elaborar Plano de Ação", //2
+      // "Discussão do Plano de Ação", //2
+      // "Atualizar Equipe do Projeto", //2
+      // "Preparar Solicitação de Sourcing e Verificar Documentos Adicionais", //2
+      // "Alternative Procurement Method" //3
     ].map(normalize),
   },
   Tecnico: {
@@ -234,9 +234,10 @@ async function buildResult(req) {
     const emailNorm = normalize(filtroEmail);
     rcs = rcs.filter(r => normalize(r.EmialOwner) === emailNorm);
   }
-
-  const levelC = rcs.filter(
-    r => r.Level === "C" && r._RequestInternalId
+  const levelC = rcs.filter(r =>
+    r.Level === "C" &&
+    r._RequestInternalId &&
+    new Date(r.DataCriacao) >= new Date("2025-06-01")
   );
 
   const xml = await httpGetText(TASKS_URL);
@@ -320,7 +321,7 @@ function calcularSlaProcessoPorWs(tasks) {
     const grupo = matchCategoriaStrict(tituloNorm);
     if (!grupo) continue;
 
-    const grupoKey = grupo.toLowerCase(); // 🔥 AQUI
+    const grupoKey = grupo.toLowerCase();
 
     const inicio = new Date(t.BeginDate);
     const fim = t.EndDateTime ? new Date(t.EndDateTime) : now;
@@ -346,7 +347,6 @@ app.get("/mendix/sla-processo", async (req, res) => {
     );
 
     const slaPorGrupoCalc = calcularSlaProcessoPorWs(tasks);
-
     const slaTotalProcesso = {
       dias:
         slaPorGrupoCalc.juridico.dias +
@@ -426,8 +426,10 @@ async function contarKeywordsTasks(req) {
     rcs = rcs.filter(r => normalize(r.EmialOwner) === emailNorm);
   }
 
-  const levelC = rcs.filter(
-    r => r.Level === "C" && r._RequestInternalId
+  const levelC = rcs.filter(r =>
+    r.Level === "C" &&
+    r._RequestInternalId &&
+    new Date(r.DataCriacao) >= new Date("2025-06-01")
   );
 
   // ================= TASKS =================
@@ -512,8 +514,10 @@ async function buildResultPorEtapa(req) {
     rcs = rcs.filter(r => normalize(r.EmialOwner) === emailNorm);
   }
 
-  const levelC = rcs.filter(
-    r => r.Level === "C" && r._RequestInternalId
+  const levelC = rcs.filter(r =>
+    r.Level === "C" &&
+    r._RequestInternalId &&
+    new Date(r.DataCriacao) >= new Date("2025-06-01")
   );
 
   // ================= TASKS =================
@@ -605,8 +609,10 @@ async function index(req) {
     rcs = rcs.filter(r => normalize(r.EmialOwner) === emailNorm);
   }
 
-  const levelC = rcs.filter(
-    r => r.Level === "C" && r._RequestInternalId
+  const levelC = rcs.filter(r =>
+    r.Level === "C" &&
+    r._RequestInternalId &&
+    new Date(r.DataCriacao) >= new Date("2025-06-01")
   );
 
   // ================= TASKS =================
