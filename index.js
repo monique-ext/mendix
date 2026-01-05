@@ -91,21 +91,21 @@ const categorias = {
       "Overall", //2
       "Emissão do Contrato SAP", //1
       "Conexão do Fornecedor", //2
-      // "Analysis and Data Collection and Strategy Definition", //2
-      // "Finalize Sourcing Project  no Ariba - Mudar o Status do Projeto para Concluído", //1
-      // "Contrato em Assinatura (Docusign)", //1
-      // "Evaluate Scenario for Awards", //3
-      // "Preencher na Capa do Projeto  o campo valor final da negociação", //2
-      // "Award supplier", //1
-      // "Top Signed contract", //1
-      // "Operating Contract", //1
-      // "Gerar Pedido no Buying - Enviar Cotações ao Sistema Externo", //2
-      // "Finalização do Projeto", //1
-      // "Elaborar Plano de Ação", //2
-      // "Discussão do Plano de Ação", //2
-      // "Atualizar Equipe do Projeto", //2
-      // "Preparar Solicitação de Sourcing e Verificar Documentos Adicionais", //2
-      // "Alternative Procurement Method" //3
+      "Analysis and Data Collection and Strategy Definition", //2
+      "Finalize Sourcing Project  no Ariba - Mudar o Status do Projeto para Concluído", //1
+      "Contrato em Assinatura (Docusign)", //1
+      "Evaluate Scenario for Awards", //3
+      "Preencher na Capa do Projeto  o campo valor final da negociação", //2
+      "Award supplier", //1
+      "Top Signed contract", //1
+      "Operating Contract", //1
+      "Gerar Pedido no Buying - Enviar Cotações ao Sistema Externo", //2
+      "Finalização do Projeto", //1
+      "Elaborar Plano de Ação", //2
+      "Discussão do Plano de Ação", //2
+      "Atualizar Equipe do Projeto", //2
+      "Preparar Solicitação de Sourcing e Verificar Documentos Adicionais", //2
+      "Alternative Procurement Method" //3
     ].map(normalize),
   },
   Tecnico: {
@@ -454,8 +454,9 @@ async function contarKeywordsTasks(req) {
 
   const levelC = rcs.filter(r =>
     r.Level === "C" &&
-    r._RequestInternalId &&
-    new Date(r.DataCriacao) >= new Date("2025-06-01")
+    r._RequestInternalId 
+    // &&
+    // new Date(r.DataCriacao) >= new Date("2025-06-01")
   );
 
   const xml = await httpGetText(TASKS_URL);
@@ -534,8 +535,9 @@ async function buildResultPorEtapa(req) {
 
   const levelC = rcs.filter(r =>
     r.Level === "C" &&
-    r._RequestInternalId &&
-    new Date(r.DataCriacao) >= new Date("2025-06-01")
+    r._RequestInternalId 
+    // &&
+    // new Date(r.DataCriacao) >= new Date("2025-06-01")
   );
 
   const xml = await httpGetText(TASKS_URL);
