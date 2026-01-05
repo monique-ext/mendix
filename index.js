@@ -27,6 +27,45 @@ function normalize(str) {
     .trim();
 }
 
+// ================= MAPA DE EQUIVALÊNCIA DE ETAPAS (OFICIAL) =================
+const etapaAliasMap = new Map([
+  // ================= TÉCNICO =================
+  ['analise tecnica', 'avaliacao tecnica'],
+
+  // ================= SUPRIMENTOS =================
+  ['analysis and data collection and strategy definition', 'definicao de estrategia de compras'],
+  ['analysis, data collection and strategy definition', 'definicao de estrategia de compras'],
+  ['update project team', 'definicao de estrategia de compras'],
+  ['atualizar equipe do projeto', 'definicao de estrategia de compras'],
+
+  ['detail the supply models that will go to the quotation process (rfq)', 'rft'],
+
+  ['award supplier', 'overall'],
+
+  ['fechamento do processo (atualizar o contrato operacional e comunicar as partes)', 'emissao do contrato sap'],
+  ['operating contract', 'emissao do contrato sap'],
+
+  // ================= JURÍDICO =================
+  ['contract drafting (elaw)', 'elaboracao de minuta'],
+  ['elaboracao de contrato (elaw)', 'elaboracao de minuta'],
+
+  ['contrato em aprovacao (elaw)', 'discussao de minuta'],
+  ['contrato em discussao juridica (elaw)', 'discussao de minuta'],
+  ['discussao de minuta', 'discussao de minuta'],
+
+  ['contrato em assinatura (docusign)', 'assinatura'],
+  ['signature agreement (docusign)', 'assinatura'],
+  ['contrato em chancela (elaw)', 'assinatura'],
+  ['top signed contract', 'assinatura'],
+]);
+
+function normalizeEtapa(titulo) {
+  const norm = normalize(titulo);
+
+  return etapaAliasMap.get(norm) ?? norm;
+}
+
+
 // ================= CATEGORIAS (INALTERADAS) =================
 const categorias = {
   Juridico: {
@@ -52,21 +91,21 @@ const categorias = {
       "Overall", //2
       "Emissão do Contrato SAP", //1
       "Conexão do Fornecedor", //2
-      "Analysis and Data Collection and Strategy Definition", //2
-      "Finalize Sourcing Project  no Ariba - Mudar o Status do Projeto para Concluído", //1
-      "Contrato em Assinatura (Docusign)", //1
-      "Evaluate Scenario for Awards", //3
-      "Preencher na Capa do Projeto  o campo valor final da negociação", //2
-      "Award supplier", //1
-      "Top Signed contract", //1
-      "Operating Contract", //1
-      "Gerar Pedido no Buying - Enviar Cotações ao Sistema Externo", //2
-      "Finalização do Projeto", //1
-      "Elaborar Plano de Ação", //2
-      "Discussão do Plano de Ação", //2
-      "Atualizar Equipe do Projeto", //2
-      "Preparar Solicitação de Sourcing e Verificar Documentos Adicionais", //2
-      "Alternative Procurement Method" //3
+      // "Analysis and Data Collection and Strategy Definition", //2
+      // "Finalize Sourcing Project  no Ariba - Mudar o Status do Projeto para Concluído", //1
+      // "Contrato em Assinatura (Docusign)", //1
+      // "Evaluate Scenario for Awards", //3
+      // "Preencher na Capa do Projeto  o campo valor final da negociação", //2
+      // "Award supplier", //1
+      // "Top Signed contract", //1
+      // "Operating Contract", //1
+      // "Gerar Pedido no Buying - Enviar Cotações ao Sistema Externo", //2
+      // "Finalização do Projeto", //1
+      // "Elaborar Plano de Ação", //2
+      // "Discussão do Plano de Ação", //2
+      // "Atualizar Equipe do Projeto", //2
+      // "Preparar Solicitação de Sourcing e Verificar Documentos Adicionais", //2
+      // "Alternative Procurement Method" //3
     ].map(normalize),
   },
   Tecnico: {
@@ -204,10 +243,10 @@ function calcularSlaTasks(tasks, filtroEtapa) {
   const etapaNorm = filtroEtapa ? normalize(filtroEtapa) : null;
 
   for (const t of tasks) {
-    if (!t.BeginDate || t.EndDateTime) continue;
-    if (etapaNorm && normalize(t.Title) !== etapaNorm) continue;
+    if (!t.BeginDate || t.EndDateTime !== null) continue;
+    if (etapaNorm && normalizeEtapa(t.Title) !== etapaNorm) continue;
 
-    const titulo = normalize(t.Title);
+    const titulo = normalizeEtapa(t.Title);
 
     for (const [grupo, cfg] of Object.entries(categorias)) {
       if (!cfg.keywords.includes(titulo)) continue;
@@ -220,10 +259,11 @@ function calcularSlaTasks(tasks, filtroEtapa) {
       else resumo[grupo].noPrazo++;
     }
   }
+
   return resumo;
 }
 
-// ================= BUSINESS RC (INALTERADO) =================
+
 async function buildResult(req) {
   const filtroEmail = req.query.user;
   const filtroEtapa = req.query.etapa;
@@ -236,8 +276,7 @@ async function buildResult(req) {
   }
   const levelC = rcs.filter(r =>
     r.Level === "C" &&
-    r._RequestInternalId &&
-    new Date(r.DataCriacao) >= new Date("2025-06-01")
+    r._RequestInternalId
   );
 
   const xml = await httpGetText(TASKS_URL);
@@ -285,10 +324,6 @@ app.get("/mendix/rc", async (req, res) => {
 });
 
 
-// ==========================================================
-// =============== 🔥 ENDPOINT NOVO 🔥 ======================
-// ==========================================================
-
 function matchCategoriaStrict(tituloOriginal) {
   const tituloNorm = normalize(tituloOriginal);
 
@@ -303,8 +338,6 @@ function matchCategoriaStrict(tituloOriginal) {
   return null;
 }
 
-
-// Função NOVA – não reutiliza lógica do RC
 function calcularSlaProcessoPorWs(tasks) {
   const now = new Date();
 
@@ -317,10 +350,10 @@ function calcularSlaProcessoPorWs(tasks) {
   for (const t of tasks) {
     if (!t.BeginDate) continue;
 
-    const tituloNorm = normalize(t.Title);
+    const tituloNorm = normalizeEtapa(t.Title);
     const grupo = matchCategoriaStrict(tituloNorm);
-    if (!grupo) continue;
 
+    if (!grupo) continue;
     const grupoKey = grupo.toLowerCase();
 
     const inicio = new Date(t.BeginDate);
@@ -396,26 +429,19 @@ app.get("/mendix/sla-processo", async (req, res) => {
   }
 });
 
-// ==========================================================
-// ============ 🔥 ENDPOINT KEYWORDS (NOVO) 🔥 ==============
-// ==========================================================
-
-// ================= KEYWORDS =================
 
 const keywordToGroup = new Map();
 
 for (const [GrupoEtapa, cfg] of Object.entries(categorias)) {
   for (const kw of cfg.keywords) {
-    keywordToGroup.set(normalize(kw), GrupoEtapa);
+    keywordToGroup.set(kw, GrupoEtapa); // kw já normalizada
   }
 }
-
-// ================= CONTADOR =================
 
 async function contarKeywordsTasks(req) {
   const filtroEmail = req.query.user;
   const filtroEtapa = req.query.etapa
-    ? normalize(req.query.etapa)
+    ? normalizeEtapa(req.query.etapa)
     : null;
 
   const rcsResp = await httpGetJson(`${BASE_URL}/requisicao`);
@@ -432,8 +458,6 @@ async function contarKeywordsTasks(req) {
     new Date(r.DataCriacao) >= new Date("2025-06-01")
   );
 
-  // ================= TASKS =================
-
   const xml = await httpGetText(TASKS_URL);
   const tasks = parseTasksXml(xml);
 
@@ -444,8 +468,6 @@ async function contarKeywordsTasks(req) {
     }
     map.get(t.ParentWorkspace_InternalId).push(t);
   }
-
-  // ================= CONTADOR =================
 
   const contador = {};
 
@@ -459,13 +481,11 @@ async function contarKeywordsTasks(req) {
 
     for (const t of rcTasks) {
       if (!t?.Title) continue;
-
       if (!t.BeginDate) continue;
       if (t.EndDateTime !== null) continue;
 
-      const titleNorm = normalize(t.Title);
+      const titleNorm = normalizeEtapa(t.Title);
 
-      // filtro opcional por etapa
       if (filtroEtapa && titleNorm !== filtroEtapa) continue;
 
       const GrupoEtapa = keywordToGroup.get(titleNorm);
@@ -475,7 +495,7 @@ async function contarKeywordsTasks(req) {
 
       if (!contador[key]) {
         contador[key] = {
-          NomeEtapa: t.Title, // mantém texto original
+          NomeEtapa: t.Title,
           GrupoEtapa,
           Quantidade: 0,
         };
@@ -487,8 +507,6 @@ async function contarKeywordsTasks(req) {
 
   return Object.values(contador);
 }
-
-// ================= ENDPOINT =================
 
 app.get("/mendix/tasks/keywords", async (req, res) => {
   try {
@@ -505,7 +523,7 @@ app.get("/mendix/tasks/keywords", async (req, res) => {
 async function buildResultPorEtapa(req) {
   const filtroEmail = req.query.user;
   const now = new Date();
-  // ================= RC =================
+
   const rcsResp = await httpGetJson(`${BASE_URL}/requisicao`);
   let rcs = asArray(rcsResp);
 
@@ -520,9 +538,9 @@ async function buildResultPorEtapa(req) {
     new Date(r.DataCriacao) >= new Date("2025-06-01")
   );
 
-  // ================= TASKS =================
   const xml = await httpGetText(TASKS_URL);
   const tasks = parseTasksXml(xml);
+
   const map = new Map();
   for (const t of tasks) {
     if (!map.has(t.ParentWorkspace_InternalId)) {
@@ -531,13 +549,11 @@ async function buildResultPorEtapa(req) {
     map.get(t.ParentWorkspace_InternalId).push(t);
   }
 
-  // ================= KEYWORDS =================
   const keywords = Object.values(categorias)
     .flatMap(c => c.keywords); // já normalizadas
 
   const acumulador = {};
 
-  // ================= PROCESSAMENTO =================
   for (const rc of levelC) {
     const ws =
       rc.ParentWorkspace_InternalId ||
@@ -550,7 +566,7 @@ async function buildResultPorEtapa(req) {
       if (!task.BeginDate) continue;
       if (task.EndDateTime) continue;
 
-      const titulo = normalize(task.Title);
+      const titulo = normalizeEtapa(task.Title);
 
       for (const kw of keywords) {
         if (titulo !== kw) continue;
@@ -570,15 +586,11 @@ async function buildResultPorEtapa(req) {
     }
   }
 
-  // ================= RESULTADO =================
   return Object.entries(acumulador).map(([etapa, v]) => ({
-    etapa: etapa === 'discussao de minuta'
-      ? 'Discussão de Minuta'
-      : etapa,
+    etapa,
     mediaDias: Math.trunc(v.somaDias / v.total),
     totalTasks: v.total,
   }));
-
 }
 
 app.get("/mendix/etapas/media", async (req, res) => {
@@ -593,11 +605,31 @@ app.get("/mendix/etapas/media", async (req, res) => {
   }
 });
 
+const etapaLabelMap = {
+  'rft': 'RFT',
+  'definicao de estrategia de compras': 'Definição de Estratégia de compras',
+  'overall': 'Overall',
+  'emissao do contrato sap': 'Emissão do Contrato SAP',
+
+  'elaboracao de minuta': 'Elaboração de Minuta',
+  'discussao de minuta': 'Discussão de Minuta',
+  'assinatura': 'Assinatura',
+
+  'avaliacao tecnica': 'Avaliação Técnica',
+  'avaliacao das propostas tecnicas revisadas':
+    'Avaliação das propostas técnicas revisadas'
+};
+
+function etapaLabel(etapaNorm) {
+  return etapaLabelMap[etapaNorm] ?? etapaNorm;
+}
+
 async function index(req) {
   const filtroEmail = req.query.user;
   const filtroEtapa = req.query.etapa
-    ? normalize(req.query.etapa)
+    ? normalizeEtapa(req.query.etapa)
     : null;
+
   const now = new Date();
 
   // ================= RC =================
@@ -611,8 +643,7 @@ async function index(req) {
 
   const levelC = rcs.filter(r =>
     r.Level === "C" &&
-    r._RequestInternalId &&
-    new Date(r.DataCriacao) >= new Date("2025-06-01")
+    r._RequestInternalId
   );
 
   // ================= TASKS =================
@@ -627,11 +658,9 @@ async function index(req) {
     map.get(t.ParentWorkspace_InternalId).push(t);
   }
 
-  // ================= KEYWORDS =================
   const keywords = Object.values(categorias)
-    .flatMap(c => c.keywords); // já normalizadas
+    .flatMap(c => c.keywords); // canônicas
 
-  // ================= RESULTADO =================
   const resultado = [];
 
   // ================= PROCESSAMENTO =================
@@ -647,29 +676,25 @@ async function index(req) {
       if (!task.BeginDate) continue;
       if (task.EndDateTime) continue;
 
-      const tituloNorm = normalize(task.Title);
-
-      // filtro opcional por etapa
+      const tituloNorm = normalizeEtapa(task.Title);
       if (filtroEtapa && tituloNorm !== filtroEtapa) continue;
 
-      for (const kw of keywords) {
-        if (tituloNorm !== kw) continue;
+      if (!keywords.includes(tituloNorm)) continue;
 
-        const saldo = diffBusinessDays(
-          new Date(task.BeginDate),
-          now
-        );
+      const saldo = diffBusinessDays(
+        new Date(task.BeginDate),
+        now
+      );
 
-        resultado.push({
-          ws: rc._RequestInternalId,
-          etapa: task.Title,
-          titulo: rc.Titulo,
-          responsavel: rc.Responsavel ?? null,
-          level: rc.Level,
-          saldoUtilizado: saldo,
-          saldo: rc.Saldo
-        });
-      }
+      resultado.push({
+        ws: rc._RequestInternalId,
+        etapa: etapaLabel(tituloNorm), // 🔥 ETAPA CANÔNICA
+        titulo: rc.Titulo,
+        responsavel: rc.Responsavel ?? null,
+        level: rc.Level,
+        slaUtilizado: saldo,
+        saldo: rc.Saldo
+      });
     }
   }
 
@@ -681,146 +706,6 @@ async function index(req) {
 app.get("/mendix/index", async (req, res) => {
   try {
     const data = await index(req);
-    res.json(data);
-  } catch (e) {
-    res.status(500).json({
-      error: "Erro ao contar keywords das tasks",
-      message: e.message,
-    });
-  }
-});
-
-async function timeLine(ws) {
-  // ================= MAPA DE ETAPAS (ORDEM SAGRADA) =================
-  const etapasMap = {
-    // SUPRIMENTOS
-    'RFT': ['RFT'],
-    'Definição de Estratégia de compras': ['Definição de Estratégia de compras'],
-    'Conexão do Fornecedor': ['Conexão do Fornecedor'],
-    'Solicitação de propostas técnicas revisadas': ['Solicitação de propostas técnicas revisadas'],
-    'Análise Comercial / Negociação': [
-      'Preencher na Capa do Projeto  o campo valor final da negociação'
-    ],
-    'Emissão do Contrato SAP': ['Operating Contract'],
-    'Overall': ['Overall'],
-
-    // JURÍDICO
-    'Elaboração de Minuta': ['Elaboração de Minuta'],
-    'Discussão de Minuta': ['Discussão de Minuta'],
-    'Assinatura': [
-      'Contrato em Assinatura (Docusign)',
-      'Top Signed contract'
-    ],
-
-    // TÉCNICO
-    'Avaliação Técnica': ['Avaliação Técnica'],
-    'Avaliação das propostas técnicas revisadas': [
-      'Avaliação das propostas técnicas revisadas'
-    ]
-  };
-
-  // ================= ETAPA → GRUPO =================
-  const etapaToGrupo = {
-    'RFT': 'Suprimentos',
-    'Definição de Estratégia de compras': 'Suprimentos',
-    'Conexão do Fornecedor': 'Suprimentos',
-    'Solicitação de propostas técnicas revisadas': 'Suprimentos',
-    'Análise Comercial / Negociação': 'Suprimentos',
-    'Emissão do Contrato SAP': 'Suprimentos',
-    'Overall': 'Suprimentos',
-
-    'Elaboração de Minuta': 'Jurídico',
-    'Discussão de Minuta': 'Jurídico',
-    'Assinatura': 'Jurídico',
-
-    'Avaliação Técnica': 'Técnico',
-    'Avaliação das propostas técnicas revisadas': 'Técnico'
-  };
-
-  // ================= BUSCA TASKS =================
-  const xml = await httpGetText(TASKS_URL);
-  const tasks = parseTasksXml(xml)
-    .filter(t => t.ParentWorkspace_InternalId === ws)
-    .sort((a, b) => {
-      if (!a.BeginDate) return 1;
-      if (!b.BeginDate) return -1;
-      return new Date(a.BeginDate) - new Date(b.BeginDate);
-    });
-
-  // ================= MONTA LISTA LINEAR =================
-  const resultadoLinear = [];
-
-  for (const [etapa, titulosValidos] of Object.entries(etapasMap)) {
-    const titulosNorm = titulosValidos.map(normalize);
-
-    const task = tasks.find(t =>
-      t.Title && titulosNorm.includes(normalize(t.Title))
-    );
-
-    let status = null;
-    let start = null;
-    let end = null;
-
-    if (task?.BeginDate && task?.EndDateTime) {
-      status = 'Finalizada';
-      start = task.BeginDate;
-      end = task.EndDateTime;
-    } else if (task?.BeginDate) {
-      status = 'Em andamento';
-      start = task.BeginDate;
-    }
-
-    resultadoLinear.push({
-      grupoEtapa: etapaToGrupo[etapa],
-      nomeEtapa: etapa,
-      start,
-      end,
-      status
-    });
-  }
-
-  // ================= AGRUPA POR GRUPO =================
-  const agrupado = {};
-
-  for (const item of resultadoLinear) {
-    if (!agrupado[item.grupoEtapa]) {
-      agrupado[item.grupoEtapa] = {
-        grupoEtapa: item.grupoEtapa,
-        items: []
-      };
-    }
-
-    agrupado[item.grupoEtapa].items.push({
-      nomeEtapa: item.nomeEtapa,
-      start: item.start,
-      end: item.end,
-      status: item.status
-    });
-  }
-
-  // ================= ORDENA DENTRO DO GRUPO =================
-  for (const grupo of Object.values(agrupado)) {
-    grupo.items.sort((a, b) => {
-      if (a.start && b.start) {
-        const diff = new Date(a.start) - new Date(b.start);
-        if (diff !== 0) return diff;
-      }
-      if (a.start && !b.start) return -1;
-      if (!a.start && b.start) return 1;
-      return a.nomeEtapa.localeCompare(b.nomeEtapa, 'pt-BR');
-    });
-  }
-
-  return Object.values(agrupado);
-}
-
-
-app.get("/mendix/timeLine", async (req, res) => {
-  try {
-    const ws = req.query.ws;
-    if (!ws) throw new Error("Parâmetro ?ws é obrigatório");
-
-    const data = await timeLine(ws);
     res.json(data);
   } catch (e) {
     res.status(500).json({
@@ -872,21 +757,33 @@ async function timelinev2(ws) {
     'Avaliação das propostas técnicas revisadas': 'tecnico'
   };
 
+  // 🔥 etapas canônicas conhecidas
+  const etapasCanonicas = new Set(
+    Object.keys(etapaToGrupo).map(e => normalize(e))
+  );
+
   const xml = await httpGetText(TASKS_URL);
   const tasks = parseTasksXml(xml)
     .filter(t => t.ParentWorkspace_InternalId === ws);
 
   const resultado = [];
 
-  for (const [etapa, titulos] of Object.entries(etapasMap)) {
-    const titulosNorm = titulos.map(normalize);
+  // ================= ETAPAS DEFINIDAS NO CÓDIGO =================
+  for (const etapa of Object.keys(etapasMap)) {
+    const etapaNorm = normalize(etapa);
 
-    const task = tasks.find(t =>
-      t.Title && titulosNorm.includes(normalize(t.Title))
+    const tasksDaEtapa = tasks.filter(t =>
+      t.Title && normalizeEtapa(t.Title) === etapaNorm
     );
 
-    let start = task?.BeginDate || null;
-    let end = task?.EndDateTime || null;
+    const task = tasksDaEtapa.sort((a, b) => {
+      if (!a.BeginDate) return 1;
+      if (!b.BeginDate) return -1;
+      return new Date(a.BeginDate) - new Date(b.BeginDate);
+    })[0];
+
+    let start = task?.BeginDate ?? null;
+    let end = task?.EndDateTime ?? null;
 
     let status = null;
     if (start && end) status = 'Finalizada';
@@ -901,7 +798,35 @@ async function timelinev2(ws) {
     });
   }
 
-  // ORDENA: start (data) → nomeEtapa (alfabética)
+  // ================= ETAPAS DESAGRUPADAS =================
+  const etapasJaUsadas = new Set(
+    resultado.map(r => normalize(r.nomeEtapa))
+  );
+
+  for (const t of tasks) {
+    if (!t.Title) continue;
+
+    const etapaNorm = normalizeEtapa(t.Title);
+
+    if (etapasCanonicas.has(etapaNorm)) continue;
+    if (etapasJaUsadas.has(etapaNorm)) continue;
+
+    let status = null;
+    if (t.BeginDate && t.EndDateTime) status = 'Finalizada';
+    else if (t.BeginDate) status = 'Em andamento';
+
+    resultado.push({
+      nomeEtapa: t.Title,
+      grupoEtapa: 'desagrupado',
+      start: t.BeginDate ?? null,
+      end: t.EndDateTime ?? null,
+      status
+    });
+
+    etapasJaUsadas.add(etapaNorm);
+  }
+
+  // ================= ORDENAÇÃO FINAL =================
   resultado.sort((a, b) => {
     if (a.start && b.start) {
       const diff = new Date(a.start) - new Date(b.start);
@@ -909,7 +834,6 @@ async function timelinev2(ws) {
     }
     if (a.start && !b.start) return -1;
     if (!a.start && b.start) return 1;
-
     return a.nomeEtapa.localeCompare(b.nomeEtapa, 'pt-BR');
   });
 
