@@ -454,7 +454,7 @@ async function contarKeywordsTasks(req) {
 
   const levelC = rcs.filter(r =>
     r.Level === "C" &&
-    r._RequestInternalId 
+    r._RequestInternalId
     // &&
     // new Date(r.DataCriacao) >= new Date("2025-06-01")
   );
@@ -496,7 +496,7 @@ async function contarKeywordsTasks(req) {
 
       if (!contador[key]) {
         contador[key] = {
-          NomeEtapa: t.Title,
+          NomeEtapa: etapaLabel(titleNorm), 
           GrupoEtapa,
           Quantidade: 0,
         };
