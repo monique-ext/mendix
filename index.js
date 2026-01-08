@@ -496,7 +496,7 @@ async function contarKeywordsTasks(req) {
 
       if (!contador[key]) {
         contador[key] = {
-          NomeEtapa: etapaLabel(titleNorm), 
+          NomeEtapa: etapaLabel(titleNorm),
           GrupoEtapa,
           Quantidade: 0,
         };
@@ -533,28 +533,23 @@ async function buildResultPorEtapa(req) {
     rcs = rcs.filter(r => normalize(r.EmialOwner) === emailNorm);
   }
 
-  const levelC = rcs.filter(r =>
-    r.Level === "C" &&
-    r._RequestInternalId 
-    // &&
-    // new Date(r.DataCriacao) >= new Date("2025-06-01")
-  );
+  const levelC = rcs.filter(r => r.Level === "C" && r._RequestInternalId);
 
   const xml = await httpGetText(TASKS_URL);
   const tasks = parseTasksXml(xml);
 
   const map = new Map();
   for (const t of tasks) {
-    if (!map.has(t.ParentWorkspace_InternalId)) {
-      map.set(t.ParentWorkspace_InternalId, []);
-    }
+    if (!map.has(t.ParentWorkspace_InternalId)) map.set(t.ParentWorkspace_InternalId, []);
     map.get(t.ParentWorkspace_InternalId).push(t);
   }
 
-  const keywords = Object.values(categorias)
-    .flatMap(c => c.keywords); // já normalizadas
-
+  const keywords = Object.values(categorias).flatMap(c => c.keywords); // já normalizadas
   const acumulador = {};
+
+  // ✅ NOVO: acumuladores gerais
+  let somaDiasTotal = 0;
+  let totalTasks = 0;
 
   for (const rc of levelC) {
     const ws =
@@ -573,10 +568,7 @@ async function buildResultPorEtapa(req) {
       for (const kw of keywords) {
         if (titulo !== kw) continue;
 
-        const dias = diffBusinessDays(
-          new Date(task.BeginDate),
-          now
-        );
+        const dias = diffBusinessDays(new Date(task.BeginDate), now);
 
         if (!acumulador[kw]) {
           acumulador[kw] = { somaDias: 0, total: 0 };
@@ -584,15 +576,26 @@ async function buildResultPorEtapa(req) {
 
         acumulador[kw].somaDias += dias;
         acumulador[kw].total += 1;
+
+        // ✅ NOVO: soma geral e total geral
+        somaDiasTotal += dias;
+        totalTasks += 1;
       }
     }
   }
 
-  return Object.entries(acumulador).map(([etapa, v]) => ({
+  const mediaGeral = totalTasks ? Math.trunc(somaDiasTotal / totalTasks) : 0;
+
+  const porEtapa = Object.entries(acumulador).map(([etapa, v]) => ({
     etapa,
     mediaDias: Math.trunc(v.somaDias / v.total),
     totalTasks: v.total,
   }));
+
+  return {
+    itens: porEtapa,
+    mediaGeral: { mediaDias: mediaGeral, totalTasks, somaDiasTotal }
+  };
 }
 
 app.get("/mendix/etapas/media", async (req, res) => {
@@ -628,9 +631,7 @@ function etapaLabel(etapaNorm) {
 
 async function index(req) {
   const filtroEmail = req.query.user;
-  const filtroEtapa = req.query.etapa
-    ? normalizeEtapa(req.query.etapa)
-    : null;
+  const filtroEtapa = req.query.etapa ? normalizeEtapa(req.query.etapa) : null;
 
   const now = new Date();
 
@@ -643,10 +644,7 @@ async function index(req) {
     rcs = rcs.filter(r => normalize(r.EmialOwner) === emailNorm);
   }
 
-  const levelC = rcs.filter(r =>
-    r.Level === "C" &&
-    r._RequestInternalId
-  );
+  const levelC = rcs.filter(r => r.Level === "C" && r._RequestInternalId);
 
   // ================= TASKS =================
   const xml = await httpGetText(TASKS_URL);
@@ -654,14 +652,19 @@ async function index(req) {
 
   const map = new Map();
   for (const t of tasks) {
-    if (!map.has(t.ParentWorkspace_InternalId)) {
-      map.set(t.ParentWorkspace_InternalId, []);
-    }
+    if (!map.has(t.ParentWorkspace_InternalId)) map.set(t.ParentWorkspace_InternalId, []);
     map.get(t.ParentWorkspace_InternalId).push(t);
   }
 
-  const keywords = Object.values(categorias)
-    .flatMap(c => c.keywords); // canônicas
+  const keywords = Object.values(categorias).flatMap(c => c.keywords); // canônicas
+
+  // ===== helper: etapa -> grupo do SLA (juridico/suprimentos/tecnico) =====
+  function grupoPorEtapa(tituloNorm) {
+    if (categorias.Juridico.keywords.includes(tituloNorm)) return "juridico";
+    if (categorias.Suprimentos.keywords.includes(tituloNorm)) return "suprimentos";
+    if (categorias.Tecnico.keywords.includes(tituloNorm)) return "tecnico";
+    return null;
+  }
 
   const resultado = [];
 
@@ -674,26 +677,30 @@ async function index(req) {
 
     const rcTasks = map.get(ws) || [];
 
+    // ======= MESMA LÓGICA DO /mendix/sla-processo (por WS) =======
+    const slaPorGrupoCalc = calcularSlaProcessoPorWs(rcTasks);
+
     for (const task of rcTasks) {
       if (!task.BeginDate) continue;
-      if (task.EndDateTime) continue;
+      if (task.EndDateTime) continue; // só etapa em aberto
 
       const tituloNorm = normalizeEtapa(task.Title);
       if (filtroEtapa && tituloNorm !== filtroEtapa) continue;
 
       if (!keywords.includes(tituloNorm)) continue;
 
-      const saldo = diffBusinessDays(
-        new Date(task.BeginDate),
-        now
-      );
+      let saldo = 0;
+      saldo += Number(slaPorGrupoCalc?.juridico?.dias ?? 0);
+      saldo += Number(slaPorGrupoCalc?.suprimentos?.dias ?? 0);
+      saldo += Number(slaPorGrupoCalc?.tecnico?.dias ?? 0);
 
       resultado.push({
         ws: rc._RequestInternalId,
-        etapa: etapaLabel(tituloNorm), // 🔥 ETAPA CANÔNICA
+        etapa: etapaLabel(tituloNorm),
         titulo: rc.Titulo,
         responsavel: rc.Responsavel ?? null,
         level: rc.Level,
+
         slaUtilizado: saldo,
         saldo: rc.Saldo
       });
@@ -702,6 +709,7 @@ async function index(req) {
 
   return resultado;
 }
+
 
 // ================= ENDPOINT =================
 
