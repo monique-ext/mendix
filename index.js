@@ -702,7 +702,7 @@ async function index(req) {
         level: rc.Level,
 
         slaUtilizado: saldo,
-        saldo: rc.Saldo
+        saldo: Number(rc.Saldo)
       });
     }
   }
