@@ -682,7 +682,6 @@ async function index(req) {
   }
 
   const levelC = rcs.filter(r => r.Level === "C" && r._RequestInternalId);
-  console.log(levelC)
   // ================= TASKS =================
   const xml = await httpGetText(TASKS_URL);
 
@@ -775,7 +774,7 @@ async function index(req) {
       responsavel: rc.Responsavel ?? null,
       level: rc.Level,
 
-      status,
+      // status,
       slaUtilizado: Number(slaUtilizado),
       saldo: Number(rc.Saldo),
     });
