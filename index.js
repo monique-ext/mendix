@@ -635,6 +635,43 @@ async function index(req) {
 
   const now = new Date();
 
+  // ================= helpers =================
+  function asArraySafe(v) {
+    if (!v) return [];
+    if (Array.isArray(v)) return v;
+    return [v];
+  }
+
+  function startOfDay(d) {
+    const x = new Date(d);
+    x.setHours(0, 0, 0, 0);
+    return x;
+  }
+
+  function isBusinessDay(d) {
+    const day = d.getDay(); // 0 dom, 6 sab
+    return day !== 0 && day !== 6;
+  }
+
+  // conta dias úteis ENTRE as datas (exclui o dia inicial, inclui o final)
+  function businessDaysBetween(a, b) {
+    if (!a || !b) return 0;
+
+    let start = startOfDay(a);
+    let end = startOfDay(b);
+    if (end < start) [start, end] = [end, start];
+
+    let days = 0;
+    const cur = new Date(start);
+    cur.setDate(cur.getDate() + 1); // não conta o dia do start
+
+    while (cur <= end) {
+      if (isBusinessDay(cur)) days++;
+      cur.setDate(cur.getDate() + 1);
+    }
+    return days;
+  }
+
   // ================= RC =================
   const rcsResp = await httpGetJson(`${BASE_URL}/requisicao`);
   let rcs = asArray(rcsResp);
@@ -645,30 +682,25 @@ async function index(req) {
   }
 
   const levelC = rcs.filter(r => r.Level === "C" && r._RequestInternalId);
-
+  console.log(levelC)
   // ================= TASKS =================
   const xml = await httpGetText(TASKS_URL);
-  const tasks = parseTasksXml(xml);
+
+  const parsed = parseTasksXml(xml);
+  const tasks = asArraySafe(parsed?.tasks ?? parsed); // <- evita "tasks is not iterable"
 
   const map = new Map();
   for (const t of tasks) {
+    if (!t || !t.ParentWorkspace_InternalId) continue;
     if (!map.has(t.ParentWorkspace_InternalId)) map.set(t.ParentWorkspace_InternalId, []);
     map.get(t.ParentWorkspace_InternalId).push(t);
   }
 
   const keywords = Object.values(categorias).flatMap(c => c.keywords); // canônicas
 
-  // ===== helper: etapa -> grupo do SLA (juridico/suprimentos/tecnico) =====
-  function grupoPorEtapa(tituloNorm) {
-    if (categorias.Juridico.keywords.includes(tituloNorm)) return "juridico";
-    if (categorias.Suprimentos.keywords.includes(tituloNorm)) return "suprimentos";
-    if (categorias.Tecnico.keywords.includes(tituloNorm)) return "tecnico";
-    return null;
-  }
-
   const resultado = [];
 
-  // ================= PROCESSAMENTO =================
+  // ================= PROCESSAMENTO (1 linha por RC) =================
   for (const rc of levelC) {
     const ws =
       rc.ParentWorkspace_InternalId ||
@@ -677,38 +709,97 @@ async function index(req) {
 
     const rcTasks = map.get(ws) || [];
 
-    // ======= MESMA LÓGICA DO /mendix/sla-processo (por WS) =======
-    const slaPorGrupoCalc = calcularSlaProcessoPorWs(rcTasks);
+    // só etapas que estão nas keywords canônicas
+    const tasksKeyword = rcTasks.filter(t => {
+      const tituloNorm = normalizeEtapa(t.Title);
+      return keywords.includes(tituloNorm);
+    });
 
-    for (const task of rcTasks) {
-      if (!task.BeginDate) continue;
-      if (task.EndDateTime) continue; // só etapa em aberto
-
-      const tituloNorm = normalizeEtapa(task.Title);
-      if (filtroEtapa && tituloNorm !== filtroEtapa) continue;
-
-      if (!keywords.includes(tituloNorm)) continue;
-
-      let saldo = 0;
-      saldo += Number(slaPorGrupoCalc?.juridico?.dias ?? 0);
-      saldo += Number(slaPorGrupoCalc?.suprimentos?.dias ?? 0);
-      saldo += Number(slaPorGrupoCalc?.tecnico?.dias ?? 0);
-
-      resultado.push({
-        ws: rc._RequestInternalId,
-        etapa: etapaLabel(tituloNorm),
-        titulo: rc.Titulo,
-        responsavel: rc.Responsavel ?? null,
-        level: rc.Level,
-
-        slaUtilizado: saldo,
-        saldo: Number(rc.Saldo)
-      });
+    // filtro de etapa (se vier)
+    if (filtroEtapa) {
+      const temEtapa = tasksKeyword.some(t => normalizeEtapa(t.Title) === filtroEtapa);
+      if (!temEtapa) continue;
     }
+
+    const started = tasksKeyword.filter(t => !!t.BeginDate);
+    const completed = tasksKeyword.filter(t => !!t.BeginDate && !!t.EndDateTime);
+    const running = tasksKeyword.filter(t => !!t.BeginDate && !t.EndDateTime);
+    const pending = tasksKeyword.filter(t => !t.BeginDate); // não iniciou
+
+    // SLA base (mesma lógica do /mendix/sla-processo por WS)
+    const slaPorGrupoCalc = calcularSlaProcessoPorWs(tasksKeyword);
+
+    let slaBase = 0;
+    slaBase += Number(slaPorGrupoCalc?.juridico?.dias ?? 0);
+    slaBase += Number(slaPorGrupoCalc?.suprimentos?.dias ?? 0);
+    slaBase += Number(slaPorGrupoCalc?.tecnico?.dias ?? 0);
+
+    // ================= STATUS + SLA FINAL =================
+    let status = "a iniciar";
+    let slaUtilizado = 0;
+
+    // 1) Não foi iniciado -> "a iniciar" sla 0
+    if (tasksKeyword.length === 0 || started.length === 0) {
+      status = "a iniciar";
+      slaUtilizado = 0;
+    }
+    // 2) Todas as etapas têm início e fim -> "concluido" sla total
+    else if (pending.length === 0 && running.length === 0) {
+      status = "concluido";
+      slaUtilizado = slaBase;
+    }
+    // 3) Tem início e não tem fim -> "em execução" sla calculo normal
+    else if (running.length > 0) {
+      status = "em execução";
+      slaUtilizado = slaBase;
+    }
+    // 4) Teve etapa iniciada/terminada mas ainda tem pendentes -> "em espera" e sla continua (concluidas + hoje)
+    else {
+      status = "em espera";
+
+      let diasEmEspera = 0;
+      const lastEnd = completed
+        .map(t => new Date(t.EndDateTime))
+        .sort((a, b) => b - a)[0];
+
+      if (lastEnd) {
+        diasEmEspera = Number(businessDaysBetween(lastEnd, now) ?? 0);
+      }
+
+      slaUtilizado = slaBase + diasEmEspera;
+    }
+
+    resultado.push({
+      ws: rc._RequestInternalId,
+      titulo: rc.Titulo,
+      responsavel: rc.Responsavel ?? null,
+      level: rc.Level,
+
+      status,
+      slaUtilizado: Number(slaUtilizado),
+      saldo: Number(rc.Saldo),
+    });
   }
+
+  // ================= ORDENAÇÃO (mais atrasada primeiro) =================
+  // prioridade: execução > espera > a iniciar > concluido
+  const prioridade = {
+    "em execução": 3,
+    "em espera": 2,
+    "a iniciar": 1,
+    "concluido": 0,
+  };
+
+  resultado.sort((a, b) => {
+    const pa = prioridade[a.status] ?? 0;
+    const pb = prioridade[b.status] ?? 0;
+    if (pb !== pa) return pb - pa;
+    return Number(b.slaUtilizado) - Number(a.slaUtilizado);
+  });
 
   return resultado;
 }
+
 
 
 // ================= ENDPOINT =================
