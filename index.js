@@ -95,7 +95,8 @@ const categorias = {
       "Finalize Sourcing Project  no Ariba - Mudar o Status do Projeto para Concluído", //1
       "Contrato em Assinatura (Docusign)", //1
       "Evaluate Scenario for Awards", //3
-      "Preencher na Capa do Projeto  o campo valor final da negociação", //2
+      "Preencher na Capa do Projeto  o campo valor final da negociação",
+      "Preencher na Capa do Projeto o campo valor final da negociação", //2
       "Award supplier", //1
       "Top Signed contract", //1
       "Operating Contract", //1
@@ -263,10 +264,88 @@ function calcularSlaTasks(tasks, filtroEtapa) {
   return resumo;
 }
 
-
 async function buildResult(req) {
   const filtroEmail = req.query.user;
-  const filtroEtapa = req.query.etapa;
+  const filtroEtapa = req.query.etapa ? normalizeEtapa(req.query.etapa) : null;
+
+  // status: em_execucao | em_espera | nao_iniciado | concluido
+  function toStatusKey(input) {
+    if (input == null) return null;
+
+    let s = normalize(String(input)).trim().toLowerCase();
+    s = s.replace(/[\s-]+/g, "_").replace(/_+/g, "_");
+
+    if (s === "em_execucao" || s.includes("execucao")) return "em_execucao";
+    if (s === "em_espera" || s.includes("espera")) return "em_espera";
+    if (s === "nao_iniciado" || s.replace(/_/g, "") === "naoiniciado") return "nao_iniciado";
+    if (s === "concluido" || s.includes("conclu")) return "concluido";
+    return null;
+  }
+  const filtroStatusKey = toStatusKey(req.query.status);
+
+  function asArraySafe(v) {
+    if (!v) return [];
+    if (Array.isArray(v)) return v;
+    return [v];
+  }
+
+  // ================= WORKFLOW DETECTOR (pra status não errar) =================
+  const baseKeywords = Object.values(categorias).flatMap(c => c.keywords);
+
+  const extrasWorkflow = [
+    "Preencher na Capa do Projeto o campo valor final da negociação",
+    "Preencher na Capa do Projeto  o campo valor final da negociação",
+    "Na hora de enviar o e-mail comunicando o início do Contrato, que o Comprador já envia para o Requisitante e Fornecedor deverá ser incluído o e-mail a seguir da Tapfin: spic@tapfin.com.br",
+    "Gerar Pedido no Buying - Enviar Cotações ao Sistema Externo",
+    "Finalize Sourcing Project  no Ariba - Mudar o Status do Projeto para Concluído",
+  ];
+
+  const workflowTitles = new Set([
+    ...baseKeywords,
+    ...extrasWorkflow.map(t => normalizeEtapa(t)),
+  ]);
+
+  // fallback para títulos fora do dicionário (ex.: inglês)
+  function isWorkflowTask(title) {
+    const n = normalizeEtapa(title || "");
+    if (!n) return false;
+
+    if (workflowTitles.has(n)) return true;
+
+    // Se você tiver keywordToGroup disponível aqui, isso ajuda MUITO:
+    // (se não tiver, pode remover essa linha)
+    if (typeof keywordToGroup !== "undefined" && keywordToGroup?.get?.(n)) return true;
+
+    // fallback por padrões típicos do fluxo
+    // (pega Operating Contract, Award supplier, Signed contract, etc.)
+    return (
+      n.includes("contrato") ||
+      n.includes("contract") ||
+      n.includes("docusign") ||
+      n.includes("elaw") ||
+      n.includes("minuta") ||
+      n.includes("ariba") ||
+      n.includes("sourcing") ||
+      n.includes("award") ||
+      n.includes("signed")
+    );
+  }
+
+  function calcularStatusKey(rcTasksAll) {
+    const rcTasksWorkflow = (rcTasksAll || []).filter(t => t?.Title && isWorkflowTask(t.Title));
+
+    const naoIniciadas = rcTasksWorkflow.filter(t => !t.BeginDate && !t.EndDateTime);
+    const emExecucao = rcTasksWorkflow.filter(t => !!t.BeginDate && !t.EndDateTime);
+    const concluidas = rcTasksWorkflow.filter(t => !!t.BeginDate && !!t.EndDateTime);
+
+    // mesma regra do index
+    if (rcTasksWorkflow.length === 0 || naoIniciadas.length === rcTasksWorkflow.length) return "nao_iniciado";
+    if (emExecucao.length > 0) return "em_execucao";
+    if (concluidas.length === rcTasksWorkflow.length) return "concluido";
+    return "em_espera";
+  }
+
+  // ================= RC =================
   const rcsResp = await httpGetJson(`${BASE_URL}/requisicao`);
   let rcs = asArray(rcsResp);
 
@@ -274,18 +353,18 @@ async function buildResult(req) {
     const emailNorm = normalize(filtroEmail);
     rcs = rcs.filter(r => normalize(r.EmialOwner) === emailNorm);
   }
-  const levelC = rcs.filter(r =>
-    r.Level === "C" &&
-    r._RequestInternalId
-  );
 
+  const levelC = rcs.filter(r => r.Level === "C" && r._RequestInternalId);
+
+  // ================= TASKS =================
   const xml = await httpGetText(TASKS_URL);
-  const tasks = parseTasksXml(xml);
+  const parsed = parseTasksXml(xml);
+  const tasks = asArraySafe(parsed?.tasks ?? parsed);
+
   const map = new Map();
   for (const t of tasks) {
-    if (!map.has(t.ParentWorkspace_InternalId)) {
-      map.set(t.ParentWorkspace_InternalId, []);
-    }
+    if (!t?.ParentWorkspace_InternalId) continue;
+    if (!map.has(t.ParentWorkspace_InternalId)) map.set(t.ParentWorkspace_InternalId, []);
     map.get(t.ParentWorkspace_InternalId).push(t);
   }
 
@@ -297,9 +376,31 @@ async function buildResult(req) {
       rc._RequestInternalId ||
       rc.Workspace_InternalId;
 
-    const rcTasks = map.get(ws) || [];
+    const rcTasksAll = map.get(ws) || [];
 
-    acumular(slaGlobal, calcularSlaTasks(rcTasks, filtroEtapa));
+    const statusKey = calcularStatusKey(rcTasksAll);
+
+    // filtro por status (se vier)
+    if (filtroStatusKey && statusKey !== filtroStatusKey) continue;
+
+    // regra que você pediu:
+    // nao_iniciado => 0 tudo
+    // concluido => 0 tudo
+    if (statusKey === "nao_iniciado" || statusKey === "concluido") {
+      continue;
+    }
+
+    // em_execucao => mantém lógica atual
+    if (statusKey === "em_execucao") {
+      acumular(slaGlobal, calcularSlaTasks(rcTasksAll, filtroEtapa));
+      continue;
+    }
+
+    // em_espera => mantém lógica atual
+    if (statusKey === "em_espera") {
+      acumular(slaGlobal, calcularSlaTasks(rcTasksAll, filtroEtapa));
+      continue;
+    }
   }
 
   const slaResumo = {
@@ -368,59 +469,210 @@ function calcularSlaProcessoPorWs(tasks) {
   return resultado;
 }
 
-// Endpoint NOVO
+function calcularSlaTotalTodasEtapas(tasksWs) {
+  const now = new Date();
+  const tasksAll = (tasksWs || []).filter(t => t?.Title);
+
+  // Se existir task sem Begin e sem End, regra: Begin mais antigo -> now
+  const hasNullNull = tasksAll.some(t => !t?.BeginDate && !t?.EndDateTime);
+
+  // Achar o BeginDate mais antigo preenchido
+  let oldestBegin = null;
+  for (const t of tasksAll) {
+    if (!t?.BeginDate) continue;
+
+    const d = new Date(t.BeginDate);
+    if (isNaN(d)) continue;
+
+    if (!oldestBegin || d < oldestBegin) oldestBegin = d;
+  }
+
+  // Se não tem nenhum begin preenchido, não dá pra calcular
+  if (!oldestBegin) return 0;
+
+  // ✅ Prioridade máxima: se tiver null/null, calcula do mais antigo até hoje
+  if (hasNullNull) {
+    return Number(businessDaysClosedInclusive(oldestBegin, now) ?? 0);
+  }
+
+  // Caso normal: soma por tarefa
+  let total = 0;
+
+  for (const t of tasksAll) {
+    if (!t?.BeginDate) continue;
+
+    const begin = new Date(t.BeginDate);
+    if (isNaN(begin)) continue;
+
+    if (t?.EndDateTime) {
+      const end = new Date(t.EndDateTime);
+      if (isNaN(end)) continue;
+      total += Number(businessDaysClosedInclusive(begin, end) ?? 0);
+    } else {
+      total += Number(businessDaysOpenExcludeStart(begin, now) ?? 0);
+    }
+  }
+
+  return total;
+}
+
+function businessDaysClosedInclusive(a, b) {
+  if (!a || !b) return 0;
+
+  let start = startOfDay(a);
+  let end = startOfDay(b);
+  if (end < start) [start, end] = [end, start];
+
+  let days = 0;
+  const cur = new Date(start);
+
+  while (cur <= end) {
+    if (isBusinessDay(cur)) days++;
+    cur.setDate(cur.getDate() + 1);
+  }
+
+  return days;
+}
+
+
+function businessDaysOpenExcludeStart(a, b) {
+  if (!a || !b) return 0;
+
+  let start = startOfDay(a);
+  let end = startOfDay(b);
+  if (end < start) [start, end] = [end, start];
+
+  let days = 0;
+  const cur = new Date(start);
+  cur.setDate(cur.getDate() + 1); // pula o dia do begin
+
+  while (cur <= end) {
+    if (isBusinessDay(cur)) days++;
+    cur.setDate(cur.getDate() + 1);
+  }
+
+  return days;
+}
+
 app.get("/mendix/sla-processo", async (req, res) => {
   try {
-    const ws = req.query.ws;
+    const ws = String(req.query.ws || "").trim();
     if (!ws) throw new Error("Parâmetro ?ws é obrigatório");
 
-    const xml = await httpGetText(TASKS_URL);
-    const tasks = parseTasksXml(xml).filter(
-      t => t.ParentWorkspace_InternalId === ws
-    );
+    // ================= helpers =================
+    function asArraySafe(v) {
+      if (!v) return [];
+      if (Array.isArray(v)) return v;
+      return [v];
+    }
 
-    const slaPorGrupoCalc = calcularSlaProcessoPorWs(tasks);
-    const slaTotalProcesso = {
-      dias:
-        slaPorGrupoCalc.juridico.dias +
-        slaPorGrupoCalc.suprimentos.dias +
-        slaPorGrupoCalc.tecnico.dias,
-      previsto:
-        categorias.Juridico.slaRef +
-        categorias.Suprimentos.slaRef +
-        categorias.Tecnico.slaRef,
-    };
+    function startOfDayUTC(d) {
+      return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+    }
+
+    // Dias úteis (Seg–Sex) inclusivo
+    function businessDaysWeekdaysInclusive(beginDate, endDate) {
+      let s = startOfDayUTC(beginDate);
+      let e = startOfDayUTC(endDate);
+      if (e < s) return 0;
+
+      let count = 0;
+      for (let d = new Date(s); d <= e; d.setUTCDate(d.getUTCDate() + 1)) {
+        const dow = d.getUTCDay(); // 0 dom, 6 sáb
+        if (dow !== 0 && dow !== 6) count++;
+      }
+      return count;
+    }
+
+    // ✅ MESMO CÁLCULO DO INDEX (SLA total do processo)
+    function calcularSlaProcessoAging(tasksWs) {
+      const now = new Date();
+      const tasksAll = (tasksWs || []).filter(t => t?.Title);
+
+      let oldestBegin = null;
+      let latestEnd = null;
+
+      let hasOpen = false;    // begin preenchido, end null
+      let hasPending = false; // begin null, end null
+
+      for (const t of tasksAll) {
+        const beginNull = !t?.BeginDate;
+        const endNull = !t?.EndDateTime;
+
+        if (beginNull && endNull) hasPending = true;
+        if (!beginNull && endNull) hasOpen = true;
+
+        if (t?.BeginDate) {
+          const b = new Date(t.BeginDate);
+          if (!Number.isNaN(b.getTime())) {
+            if (!oldestBegin || b < oldestBegin) oldestBegin = b;
+          }
+        }
+
+        if (t?.EndDateTime) {
+          const e = new Date(t.EndDateTime);
+          if (!Number.isNaN(e.getTime())) {
+            if (!latestEnd || e > latestEnd) latestEnd = e;
+          }
+        }
+      }
+
+      if (!oldestBegin) return 0;
+
+      const end = (hasOpen || hasPending || !latestEnd) ? now : latestEnd;
+      return businessDaysWeekdaysInclusive(oldestBegin, end);
+    }
+
+    // ================= TASKS =================
+    const xml = await httpGetText(TASKS_URL);
+    const parsed = parseTasksXml(xml);
+    const allTasks = asArraySafe(parsed?.tasks ?? parsed);
+
+    // "procurar a WS": aceita ParentWorkspace_InternalId ou Workspace_InternalId
+    const tasksWs = allTasks.filter(t => {
+      const p = String(t?.ParentWorkspace_InternalId || "").trim();
+      const w = String(t?.Workspace_InternalId || "").trim();
+      return p === ws || w === ws;
+    });
+
+    // ================= POR GRUPO (mantém sua lógica atual) =================
+    const slaPorGrupoCalc = calcularSlaProcessoPorWs(tasksWs);
+
+    // ================= TOTAL (NOVO - MESMO DO INDEX) =================
+    const slaTotalProcesso = Number(calcularSlaProcessoAging(tasksWs) ?? 0);
 
     const slaPorGrupo = [
       {
         Nome: "SLA total do processo",
-        dias: slaTotalProcesso.dias,
-        previsto: slaTotalProcesso.previsto
+        dias: slaTotalProcesso,
+        previsto:
+          categorias.Juridico.slaRef +
+          categorias.Suprimentos.slaRef +
+          categorias.Tecnico.slaRef,
       },
       {
         Nome: "Suprimentos",
         dias: slaPorGrupoCalc.suprimentos.dias,
-        previsto: slaPorGrupoCalc.suprimentos.previsto
+        previsto: slaPorGrupoCalc.suprimentos.previsto,
       },
       {
         Nome: "Técnico",
         dias: slaPorGrupoCalc.tecnico.dias,
-        previsto: slaPorGrupoCalc.tecnico.previsto
+        previsto: slaPorGrupoCalc.tecnico.previsto,
       },
       {
         Nome: "Jurídico",
         dias: slaPorGrupoCalc.juridico.dias,
-        previsto: slaPorGrupoCalc.juridico.previsto
+        previsto: slaPorGrupoCalc.juridico.previsto,
       },
       {
         Nome: "Governança",
         dias: 0,
-        previsto: 0
-      }
+        previsto: 0,
+      },
     ];
 
     res.json({ slaPorGrupo });
-
   } catch (e) {
     res.status(400).json({
       error: "Erro ao calcular SLA do processo",
@@ -428,7 +680,6 @@ app.get("/mendix/sla-processo", async (req, res) => {
     });
   }
 });
-
 
 const keywordToGroup = new Map();
 
@@ -440,9 +691,30 @@ for (const [GrupoEtapa, cfg] of Object.entries(categorias)) {
 
 async function contarKeywordsTasks(req) {
   const filtroEmail = req.query.user;
-  const filtroEtapa = req.query.etapa
-    ? normalizeEtapa(req.query.etapa)
-    : null;
+  const filtroEtapa = req.query.etapa ? normalizeEtapa(req.query.etapa) : null;
+
+  // status: em_execucao | em_espera | concluido | nao_iniciado
+  function toStatusKey(input) {
+    if (input == null) return null;
+
+    let s = normalize(String(input)).trim().toLowerCase();
+    s = s.replace(/[\s-]+/g, "_").replace(/_+/g, "_");
+
+    if (s === "em_execucao" || s.includes("execucao")) return "em_execucao";
+    if (s === "em_espera" || s.includes("espera")) return "em_espera";
+    if (s === "nao_iniciado" || s.replace(/_/g, "") === "naoiniciado") return "nao_iniciado";
+    if (s === "concluido" || s.includes("conclu")) return "concluido";
+
+    return null;
+  }
+  const filtroStatusKey = toStatusKey(req.query.status);
+
+  // ================= helpers =================
+  function asArraySafe(v) {
+    if (!v) return [];
+    if (Array.isArray(v)) return v;
+    return [v];
+  }
 
   const rcsResp = await httpGetJson(`${BASE_URL}/requisicao`);
   let rcs = asArray(rcsResp);
@@ -452,24 +724,36 @@ async function contarKeywordsTasks(req) {
     rcs = rcs.filter(r => normalize(r.EmialOwner) === emailNorm);
   }
 
-  const levelC = rcs.filter(r =>
-    r.Level === "C" &&
-    r._RequestInternalId
-    // &&
-    // new Date(r.DataCriacao) >= new Date("2025-06-01")
-  );
+  const levelC = rcs.filter(r => r.Level === "C" && r._RequestInternalId);
 
   const xml = await httpGetText(TASKS_URL);
-  const tasks = parseTasksXml(xml);
+  const parsed = parseTasksXml(xml);
+  const tasks = asArraySafe(parsed?.tasks ?? parsed);
 
   const map = new Map();
   for (const t of tasks) {
-    if (!map.has(t.ParentWorkspace_InternalId)) {
-      map.set(t.ParentWorkspace_InternalId, []);
-    }
+    if (!t?.ParentWorkspace_InternalId) continue;
+    if (!map.has(t.ParentWorkspace_InternalId)) map.set(t.ParentWorkspace_InternalId, []);
     map.get(t.ParentWorkspace_InternalId).push(t);
   }
 
+  // ================= WORKFLOW SET (igual no index) =================
+  const baseKeywords = Object.values(categorias).flatMap(c => c.keywords);
+
+  const extrasWorkflow = [
+    "Preencher na Capa do Projeto o campo valor final da negociação",
+    "Preencher na Capa do Projeto  o campo valor final da negociação", // variação com 2 espaços (já vi no seu input)
+    "Na hora de enviar o e-mail comunicando o início do Contrato, que o Comprador já envia para o Requisitante e Fornecedor deverá ser incluído o e-mail a seguir da Tapfin: spic@tapfin.com.br",
+    "Gerar Pedido no Buying - Enviar Cotações ao Sistema Externo",
+    "Finalize Sourcing Project  no Ariba - Mudar o Status do Projeto para Concluído",
+  ];
+
+  const workflowTitles = new Set([
+    ...baseKeywords,
+    ...extrasWorkflow.map(t => normalizeEtapa(t)),
+  ]);
+
+  // contador final
   const contador = {};
 
   for (const rc of levelC) {
@@ -478,36 +762,88 @@ async function contarKeywordsTasks(req) {
       rc._RequestInternalId ||
       rc.Workspace_InternalId;
 
-    const rcTasks = map.get(ws) || [];
+    const rcTasksAll = map.get(ws) || [];
 
-    for (const t of rcTasks) {
-      if (!t?.Title) continue;
-      if (!t.BeginDate) continue;
-      if (t.EndDateTime !== null) continue;
+    // ✅ usa o MESMO universo do index para status/etapa (workflowTitles)
+    const rcTasks = rcTasksAll.filter(t => {
+      if (!t?.Title) return false;
+      return workflowTitles.has(normalizeEtapa(t.Title));
+    });
 
-      const titleNorm = normalizeEtapa(t.Title);
+    // ================= STATUS (igual ao index) =================
+    const naoIniciadas = rcTasks.filter(t => !t.BeginDate && !t.EndDateTime);
+    const emExecucao = rcTasks.filter(t => !!t.BeginDate && !t.EndDateTime);
+    const concluidas = rcTasks.filter(t => !!t.BeginDate && !!t.EndDateTime);
 
-      if (filtroEtapa && titleNorm !== filtroEtapa) continue;
+    let statusKey = "nao_iniciado";
 
-      const GrupoEtapa = keywordToGroup.get(titleNorm);
-      if (!GrupoEtapa) continue;
-
-      const key = `${GrupoEtapa}|${titleNorm}`;
-
-      if (!contador[key]) {
-        contador[key] = {
-          NomeEtapa: etapaLabel(titleNorm),
-          GrupoEtapa,
-          Quantidade: 0,
-        };
-      }
-
-      contador[key].Quantidade++;
+    if (rcTasks.length === 0 || naoIniciadas.length === rcTasks.length) {
+      statusKey = "nao_iniciado";
+    } else if (emExecucao.length > 0) {
+      statusKey = "em_execucao";
+    } else if (concluidas.length === rcTasks.length) {
+      statusKey = "concluido";
+    } else {
+      statusKey = "em_espera";
     }
+
+    // ================= FILTRO STATUS (igual ao index) =================
+    if (!filtroStatusKey) {
+      // default: não traz concluído
+      if (statusKey === "concluido") continue;
+    } else {
+      // traz somente o status solicitado
+      if (statusKey !== filtroStatusKey) continue;
+    }
+
+    // nao iniciado: não conta nada
+    if (statusKey === "nao_iniciado") continue;
+
+    // ================= REGRA DE "ETAPA" (igual sua regra do index) =================
+    // 1) se existir begin preenchido e end null => etapa atual é essa (se várias, begin mais recente)
+    const abertas = rcTasks
+      .filter(t => !!t.BeginDate && !t.EndDateTime)
+      .slice()
+      .sort((a, b) => new Date(b.BeginDate).getTime() - new Date(a.BeginDate).getTime());
+
+    let etapaEscolhida = null;
+
+    if (abertas.length > 0) {
+      etapaEscolhida = abertas[0];
+    } else {
+      // 2) senão, última concluída = EndDateTime mais recente
+      const ultConcluida = rcTasks
+        .filter(t => !!t.EndDateTime)
+        .slice()
+        .sort((a, b) => new Date(b.EndDateTime).getTime() - new Date(a.EndDateTime).getTime())[0];
+
+      if (ultConcluida) etapaEscolhida = ultConcluida;
+    }
+
+    if (!etapaEscolhida?.Title) continue;
+
+    const etapaNorm = normalizeEtapa(etapaEscolhida.Title);
+
+    // filtro etapa
+    if (filtroEtapa && etapaNorm !== filtroEtapa) continue;
+
+    const GrupoEtapa = keywordToGroup.get(etapaNorm);
+    if (!GrupoEtapa) continue;
+
+    const key = `${GrupoEtapa}|${etapaNorm}`;
+    if (!contador[key]) {
+      contador[key] = {
+        NomeEtapa: etapaLabel(etapaNorm),
+        GrupoEtapa,
+        Quantidade: 0,
+      };
+    }
+    contador[key].Quantidade++;
   }
 
   return Object.values(contador);
 }
+
 
 app.get("/mendix/tasks/keywords", async (req, res) => {
   try {
@@ -629,47 +965,147 @@ function etapaLabel(etapaNorm) {
   return etapaLabelMap[etapaNorm] ?? etapaNorm;
 }
 
+
+// ================= helpers =================
+function asArraySafe(v) {
+  if (!v) return [];
+  if (Array.isArray(v)) return v;
+  return [v];
+}
+
+function startOfDay(d) {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+
+function isBusinessDay(d) {
+  const day = d.getDay(); // 0 dom, 6 sab
+  return day !== 0 && day !== 6;
+}
+
 async function index(req) {
   const filtroEmail = req.query.user;
   const filtroEtapa = req.query.etapa ? normalizeEtapa(req.query.etapa) : null;
 
-  const now = new Date();
-
-  // ================= helpers =================
-  function asArraySafe(v) {
-    if (!v) return [];
-    if (Array.isArray(v)) return v;
-    return [v];
+  // ================= HELPERS =================
+  function statusKeyToLabel(statusKey) {
+    if (statusKey === "em_execucao") return "Em Execução";
+    if (statusKey === "em_espera") return "Em Espera";
+    if (statusKey === "nao_iniciado") return "Não Iniciado";
+    if (statusKey === "concluido") return "Concluido";
+    return statusKey;
   }
 
-  function startOfDay(d) {
-    const x = new Date(d);
-    x.setHours(0, 0, 0, 0);
-    return x;
+  function toStatusKey(input) {
+    if (input == null) return null;
+
+    let s = normalize(String(input)).trim().toLowerCase();
+    s = s.replace(/[\s-]+/g, "_").replace(/_+/g, "_");
+
+    if (s === "em_execucao" || s.includes("execucao")) return "em_execucao";
+    if (s === "em_espera" || s.includes("espera")) return "em_espera";
+    if (s === "nao_iniciado" || s.replace(/_/g, "") === "naoiniciado") return "nao_iniciado";
+    if (s === "concluido" || s.includes("conclu")) return "concluido";
+    return null;
   }
 
-  function isBusinessDay(d) {
-    const day = d.getDay(); // 0 dom, 6 sab
-    return day !== 0 && day !== 6;
+  const filtroStatusKey = toStatusKey(req.query.status);
+
+  // ================= SLA (process aging) =================
+  function startOfDayUTC(d) {
+    return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
   }
 
-  // conta dias úteis ENTRE as datas (exclui o dia inicial, inclui o final)
-  function businessDaysBetween(a, b) {
-    if (!a || !b) return 0;
+  // Dias úteis (Seg–Sex) inclusivo: conta dia inicial e final se forem úteis
+  function businessDaysWeekdaysInclusive(beginDate, endDate) {
+    let s = startOfDayUTC(beginDate);
+    let e = startOfDayUTC(endDate);
+    if (e < s) return 0;
 
-    let start = startOfDay(a);
-    let end = startOfDay(b);
-    if (end < start) [start, end] = [end, start];
-
-    let days = 0;
-    const cur = new Date(start);
-    cur.setDate(cur.getDate() + 1); // não conta o dia do start
-
-    while (cur <= end) {
-      if (isBusinessDay(cur)) days++;
-      cur.setDate(cur.getDate() + 1);
+    let count = 0;
+    for (let d = new Date(s); d <= e; d.setUTCDate(d.getUTCDate() + 1)) {
+      const dow = d.getUTCDay(); // 0 dom, 6 sáb
+      if (dow !== 0 && dow !== 6) count++;
     }
-    return days;
+    return count;
+  }
+
+  // Regra final do SLA do processo:
+  // begin mais antigo -> end mais recente; se existir aberto (begin ok & end null) OU pendente (null/null) => fim = hoje.
+  function calcularSlaProcessoAging(tasksWs) {
+    const now = new Date();
+    const tasksAll = (tasksWs || []).filter(t => t?.Title);
+
+    let oldestBegin = null;
+    let latestEnd = null;
+
+    let hasOpen = false;    // begin preenchido, end null
+    let hasPending = false; // begin null, end null
+
+    for (const t of tasksAll) {
+      const beginNull = !t?.BeginDate;
+      const endNull = !t?.EndDateTime;
+
+      if (beginNull && endNull) hasPending = true;
+      if (!beginNull && endNull) hasOpen = true;
+
+      if (t?.BeginDate) {
+        const b = new Date(t.BeginDate);
+        if (!Number.isNaN(b.getTime())) {
+          if (!oldestBegin || b < oldestBegin) oldestBegin = b;
+        }
+      }
+
+      if (t?.EndDateTime) {
+        const e = new Date(t.EndDateTime);
+        if (!Number.isNaN(e.getTime())) {
+          if (!latestEnd || e > latestEnd) latestEnd = e;
+        }
+      }
+    }
+
+    if (!oldestBegin) return 0;
+
+    const end = (hasOpen || hasPending || !latestEnd) ? now : latestEnd;
+    return businessDaysWeekdaysInclusive(oldestBegin, end);
+  }
+
+  // ================= ETAPA ATUAL (SUA REGRA) =================
+  function getEtapaAtual(tasksWorkflow) {
+    const list = (tasksWorkflow || []).filter(t => t?.Title);
+
+    // 1) Se tiver begin preenchido e end null => está nessa etapa
+    const emExecucao = list
+      .filter(t => !!t.BeginDate && !t.EndDateTime)
+      .sort((a, b) => new Date(b.BeginDate).getTime() - new Date(a.BeginDate).getTime());
+
+    if (emExecucao.length > 0) {
+      const t = emExecucao[0];
+      return {
+        etapa: t.Title,
+        etapaKey: normalizeEtapa(t.Title),
+      };
+    }
+
+    // 2) Senão, pega a que tem EndDateTime mais recente (última concluída)
+    const concluidas = list
+      .filter(t => !!t.EndDateTime)
+      .sort((a, b) => new Date(b.EndDateTime).getTime() - new Date(a.EndDateTime).getTime());
+
+    if (concluidas.length > 0) {
+      const t = concluidas[0];
+      return {
+        etapa: t.Title,
+        etapaKey: normalizeEtapa(t.Title),
+      };
+    }
+
+    // 3) Senão, não iniciou (ou não tem tasks do workflow)
+    return {
+      etapa: null,
+      etapaKey: null,
+    };
   }
 
   // ================= RC =================
@@ -682,11 +1118,11 @@ async function index(req) {
   }
 
   const levelC = rcs.filter(r => r.Level === "C" && r._RequestInternalId);
+
   // ================= TASKS =================
   const xml = await httpGetText(TASKS_URL);
-
   const parsed = parseTasksXml(xml);
-  const tasks = asArraySafe(parsed?.tasks ?? parsed); // <- evita "tasks is not iterable"
+  const tasks = asArraySafe(parsed?.tasks ?? parsed);
 
   const map = new Map();
   for (const t of tasks) {
@@ -695,11 +1131,24 @@ async function index(req) {
     map.get(t.ParentWorkspace_InternalId).push(t);
   }
 
-  const keywords = Object.values(categorias).flatMap(c => c.keywords); // canônicas
+  // ================= WORKFLOW TITLES (STATUS/FILTRO ETAPA/ETAPA ATUAL) =================
+  const baseKeywords = Object.values(categorias).flatMap(c => c.keywords);
+
+  const extrasWorkflow = [
+    "Preencher na Capa do Projeto o campo valor final da negociação",
+    "Na hora de enviar o e-mail comunicando o início do Contrato, que o Comprador já envia para o Requisitante e Fornecedor deverá ser incluído o e-mail a seguir da Tapfin: spic@tapfin.com.br",
+    "Gerar Pedido no Buying - Enviar Cotações ao Sistema Externo",
+    "Finalize Sourcing Project  no Ariba - Mudar o Status do Projeto para Concluído",
+  ];
+
+  const workflowTitles = new Set([
+    ...baseKeywords, // já normalizados/canônicos
+    ...extrasWorkflow.map(t => normalizeEtapa(t)),
+  ]);
 
   const resultado = [];
 
-  // ================= PROCESSAMENTO (1 linha por RC) =================
+  // ================= PROCESSAMENTO =================
   for (const rc of levelC) {
     const ws =
       rc.ParentWorkspace_InternalId ||
@@ -708,100 +1157,82 @@ async function index(req) {
 
     const rcTasks = map.get(ws) || [];
 
-    // só etapas que estão nas keywords canônicas
-    const tasksKeyword = rcTasks.filter(t => {
-      const tituloNorm = normalizeEtapa(t.Title);
-      return keywords.includes(tituloNorm);
+    // Status/filtro etapa/etapa atual: somente workflow
+    const rcFiltered = rcTasks.filter(t => {
+      if (!t?.Title) return false;
+      return workflowTitles.has(normalizeEtapa(t.Title));
     });
 
-    // filtro de etapa (se vier)
+    let tasksWorkflow = []
     if (filtroEtapa) {
-      const temEtapa = tasksKeyword.some(t => normalizeEtapa(t.Title) === filtroEtapa);
-      if (!temEtapa) continue;
-    }
-
-    const started = tasksKeyword.filter(t => !!t.BeginDate);
-    const completed = tasksKeyword.filter(t => !!t.BeginDate && !!t.EndDateTime);
-    const running = tasksKeyword.filter(t => !!t.BeginDate && !t.EndDateTime);
-    const pending = tasksKeyword.filter(t => !t.BeginDate); // não iniciou
-
-    // SLA base (mesma lógica do /mendix/sla-processo por WS)
-    const slaPorGrupoCalc = calcularSlaProcessoPorWs(tasksKeyword);
-
-    let slaBase = 0;
-    slaBase += Number(slaPorGrupoCalc?.juridico?.dias ?? 0);
-    slaBase += Number(slaPorGrupoCalc?.suprimentos?.dias ?? 0);
-    slaBase += Number(slaPorGrupoCalc?.tecnico?.dias ?? 0);
-
-    // ================= STATUS + SLA FINAL =================
-    let status = "a iniciar";
-    let slaUtilizado = 0;
-
-    // 1) Não foi iniciado -> "a iniciar" sla 0
-    if (tasksKeyword.length === 0 || started.length === 0) {
-      status = "a iniciar";
-      slaUtilizado = 0;
-    }
-    // 2) Todas as etapas têm início e fim -> "concluido" sla total
-    else if (pending.length === 0 && running.length === 0) {
-      status = "concluido";
-      slaUtilizado = slaBase;
-    }
-    // 3) Tem início e não tem fim -> "em execução" sla calculo normal
-    else if (running.length > 0) {
-      status = "em execução";
-      slaUtilizado = slaBase;
-    }
-    // 4) Teve etapa iniciada/terminada mas ainda tem pendentes -> "em espera" e sla continua (concluidas + hoje)
-    else {
-      status = "em espera";
-
-      let diasEmEspera = 0;
-      const lastEnd = completed
-        .map(t => new Date(t.EndDateTime))
-        .sort((a, b) => b - a)[0];
-
-      if (lastEnd) {
-        diasEmEspera = Number(businessDaysBetween(lastEnd, now) ?? 0);
+      for (const element of rcFiltered) {
+        if (normalizeEtapa(element.Title) === filtroEtapa) {
+          tasksWorkflow.push(element)
+        }
       }
-
-      slaUtilizado = slaBase + diasEmEspera;
+    } else {
+      tasksWorkflow.push(rcFiltered)
+      tasksWorkflow = tasksWorkflow[0]
     }
+
+
+
+    // ================= STATUS =================
+    const naoIniciadas = tasksWorkflow.filter(t => !t.BeginDate && !t.EndDateTime);
+    const emExecucao = tasksWorkflow.filter(t => !!t.BeginDate && !t.EndDateTime);
+    const concluidas = tasksWorkflow.filter(t => !!t.BeginDate && !!t.EndDateTime);
+
+    let statusKey = "nao_iniciado";
+
+    if (tasksWorkflow.length === 0 || naoIniciadas.length === tasksWorkflow.length) {
+      statusKey = "nao_iniciado";
+    } else if (emExecucao.length > 0) {
+      statusKey = "em_execucao";
+    } else if (concluidas.length === tasksWorkflow.length) {
+      statusKey = "concluido";
+    } else {
+      statusKey = "em_espera";
+    }
+
+    // ================= SLA =================
+    const tasksForSla = (rcTasks || []).filter(t => t?.Title);
+
+    const slaUtilizado =
+      statusKey === "nao_iniciado" ? 0 : calcularSlaProcessoAging(tasksForSla);
+
+    // ================= ETAPA ATUAL =================
+    let etapaInfo = getEtapaAtual(tasksWorkflow);
+
+    // ================= FILTRO STATUS =================
+    if (!filtroStatusKey) {
+      if (statusKey === "concluido") continue; // default
+    } else {
+      if (statusKey !== filtroStatusKey) continue;
+    }
+
+    if (statusKey === "nao_iniciado") etapaInfo.etapa = ''
 
     resultado.push({
       ws: rc._RequestInternalId,
       titulo: rc.Titulo,
       responsavel: rc.Responsavel ?? null,
       level: rc.Level,
-
-      // status,
+      status: statusKeyToLabel(statusKey),
+      etapa: etapaInfo.etapa,
       slaUtilizado: Number(slaUtilizado),
       saldo: Number(rc.Saldo),
     });
   }
 
-  // ================= ORDENAÇÃO (mais atrasada primeiro) =================
-  // prioridade: execução > espera > a iniciar > concluido
-  const prioridade = {
-    "em execução": 3,
-    "em espera": 2,
-    "a iniciar": 1,
-    "concluido": 0,
-  };
-
+  // ================= ORDENAÇÃO (SLA desc) =================
   resultado.sort((a, b) => {
-    const pa = prioridade[a.status] ?? 0;
-    const pb = prioridade[b.status] ?? 0;
-    if (pb !== pa) return pb - pa;
-    return Number(b.slaUtilizado) - Number(a.slaUtilizado);
+    const diff = Number(b.slaUtilizado) - Number(a.slaUtilizado);
+    if (diff !== 0) return diff;
+    return String(a.titulo ?? "").localeCompare(String(b.titulo ?? ""), "pt-BR");
   });
 
   return resultado;
 }
-
-
-
-// ================= ENDPOINT =================
 
 app.get("/mendix/index", async (req, res) => {
   try {
