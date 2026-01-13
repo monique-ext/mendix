@@ -986,7 +986,7 @@ function isBusinessDay(d) {
 
 async function index(req) {
   const filtroEmail = req.query.user;
-  const filtroEtapa = req.query.etapa ? normalizeEtapa(req.query.etapa) : null;
+  const filtroEtapa = req.query.etapa ? normalize(req.query.etapa) : null;
 
   // ================= HELPERS =================
   function statusKeyToLabel(statusKey) {
@@ -1162,20 +1162,20 @@ async function index(req) {
       if (!t?.Title) return false;
       return workflowTitles.has(normalizeEtapa(t.Title));
     });
+    const filtroEtapaKey = filtroEtapa ? normalize(filtroEtapa) : null;
 
-    let tasksWorkflow = []
-    if (filtroEtapa) {
-      for (const element of rcFiltered) {
-        if (normalizeEtapa(element.Title) === filtroEtapa) {
-          tasksWorkflow.push(element)
-        }
+    // rcFiltered: lista das tasks do workflow (já filtradas por workflowTitles)
+    let tasksWorkflow = rcFiltered;
+
+    // se pediu etapa, valida que existe; mas MANTÉM todas as tasks do workflow
+    if (filtroEtapaKey) {
+      const hit = rcFiltered.find(t => normalize(t?.Title) === filtroEtapaKey);
+      if (!hit) {
+        // não tem a etapa nessa RC -> descarta RC
+        // console.log("DESCARTOU por etapa", rc._RequestInternalId, filtroEtapaKey);
+        continue;
       }
-    } else {
-      tasksWorkflow.push(rcFiltered)
-      tasksWorkflow = tasksWorkflow[0]
     }
-
-
 
     // ================= STATUS =================
     const naoIniciadas = tasksWorkflow.filter(t => !t.BeginDate && !t.EndDateTime);
@@ -1202,7 +1202,7 @@ async function index(req) {
 
     // ================= ETAPA ATUAL =================
     let etapaInfo = getEtapaAtual(tasksWorkflow);
-
+  
     // ================= FILTRO STATUS =================
     if (!filtroStatusKey) {
       if (statusKey === "concluido") continue; // default
@@ -1231,7 +1231,16 @@ async function index(req) {
     return String(a.titulo ?? "").localeCompare(String(b.titulo ?? ""), "pt-BR");
   });
 
-  return resultado;
+  let resultArray = []
+
+  for (const element of resultado) {
+    if (normalize(element.etapa) === filtroEtapa) resultArray.push(element)
+
+  }
+
+  let finalResult = resultado
+  if (resultArray.length > 0) finalResult = resultArray
+  return finalResult;
 }
 
 app.get("/mendix/index", async (req, res) => {
