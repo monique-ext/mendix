@@ -1211,7 +1211,7 @@ async function index(req) {
       titulo: rc.Titulo,
       responsavel: rc.Responsavel ?? null,
       level: rc.Level,
-      status: statusKeyToLabel(statusKey),
+      // status: statusKeyToLabel(statusKey),
       etapa: etapaInfo.etapa,
       slaUtilizado: Number(slaUtilizado),
       saldo: Number(rc.Saldo),
