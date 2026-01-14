@@ -245,9 +245,9 @@ function calcularSlaTasks(tasks, filtroEtapa) {
 
   for (const t of tasks) {
     if (!t.BeginDate || t.EndDateTime !== null) continue;
-    if (etapaNorm && normalizeEtapa(t.Title) !== etapaNorm) continue;
+    if (etapaNorm && normalize(t.Title) !== etapaNorm) continue;
 
-    const titulo = normalizeEtapa(t.Title);
+    const titulo = normalize(t.Title);
 
     for (const [grupo, cfg] of Object.entries(categorias)) {
       if (!cfg.keywords.includes(titulo)) continue;
@@ -266,7 +266,7 @@ function calcularSlaTasks(tasks, filtroEtapa) {
 
 async function buildResult(req) {
   const filtroEmail = req.query.user;
-  const filtroEtapa = req.query.etapa ? normalizeEtapa(req.query.etapa) : null;
+  const filtroEtapa = req.query.etapa ? normalize(req.query.etapa) : null;
 
   // status: em_execucao | em_espera | nao_iniciado | concluido
   function toStatusKey(input) {
@@ -386,18 +386,12 @@ async function buildResult(req) {
     // regra que você pediu:
     // nao_iniciado => 0 tudo
     // concluido => 0 tudo
-    if (statusKey === "nao_iniciado" || statusKey === "concluido") {
+    if (statusKey === "nao_iniciado" || statusKey === "concluido" || statusKey === "em_espera") {
       continue;
     }
 
     // em_execucao => mantém lógica atual
     if (statusKey === "em_execucao") {
-      acumular(slaGlobal, calcularSlaTasks(rcTasksAll, filtroEtapa));
-      continue;
-    }
-
-    // em_espera => mantém lógica atual
-    if (statusKey === "em_espera") {
       acumular(slaGlobal, calcularSlaTasks(rcTasksAll, filtroEtapa));
       continue;
     }
@@ -691,7 +685,7 @@ for (const [GrupoEtapa, cfg] of Object.entries(categorias)) {
 
 async function contarKeywordsTasks(req) {
   const filtroEmail = req.query.user;
-  const filtroEtapa = req.query.etapa ? normalizeEtapa(req.query.etapa) : null;
+  const filtroEtapa = req.query.etapa ? normalize(req.query.etapa) : null;
 
   // status: em_execucao | em_espera | concluido | nao_iniciado
   function toStatusKey(input) {
@@ -750,7 +744,7 @@ async function contarKeywordsTasks(req) {
 
   const workflowTitles = new Set([
     ...baseKeywords,
-    ...extrasWorkflow.map(t => normalizeEtapa(t)),
+    ...extrasWorkflow.map(t => normalize(t)),
   ]);
 
   // contador final
@@ -767,7 +761,7 @@ async function contarKeywordsTasks(req) {
     // ✅ usa o MESMO universo do index para status/etapa (workflowTitles)
     const rcTasks = rcTasksAll.filter(t => {
       if (!t?.Title) return false;
-      return workflowTitles.has(normalizeEtapa(t.Title));
+      return workflowTitles.has(normalize(t.Title));
     });
 
     // ================= STATUS (igual ao index) =================
@@ -822,7 +816,7 @@ async function contarKeywordsTasks(req) {
 
     if (!etapaEscolhida?.Title) continue;
 
-    const etapaNorm = normalizeEtapa(etapaEscolhida.Title);
+    const etapaNorm = normalize(etapaEscolhida.Title);
 
     // filtro etapa
     if (filtroEtapa && etapaNorm !== filtroEtapa) continue;
@@ -1202,7 +1196,7 @@ async function index(req) {
 
     // ================= ETAPA ATUAL =================
     let etapaInfo = getEtapaAtual(tasksWorkflow);
-  
+
     // ================= FILTRO STATUS =================
     if (!filtroStatusKey) {
       if (statusKey === "concluido") continue; // default
