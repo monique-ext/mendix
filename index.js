@@ -403,7 +403,10 @@ async function buildResult(req) {
     tecnico: slaGlobal.Tecnico,
   };
 
-  return { slaResumo };
+  return {
+    status: req.query.status,
+    data: slaResumo
+  };
 }
 
 // ================= ENDPOINT RC (INALTERADO) =================
@@ -835,7 +838,12 @@ async function contarKeywordsTasks(req) {
     contador[key].Quantidade++;
   }
 
-  return Object.values(contador);
+  const resultadoContador = Object.values(contador);
+
+  return {
+    status: req.query.status,
+    data: resultadoContador
+  };
 }
 
 
