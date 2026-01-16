@@ -830,7 +830,7 @@ async function contarKeywordsTasks(req) {
     const key = `${GrupoEtapa}|${etapaNorm}`;
     if (!contador[key]) {
       contador[key] = {
-        NomeEtapa: etapaLabel(etapaNorm),
+        NomeEtapa: etapaLabel(etapaEscolhida.Title),
         GrupoEtapa,
         Quantidade: 0,
       };
